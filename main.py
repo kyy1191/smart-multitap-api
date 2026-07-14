@@ -1,48 +1,74 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client, Client
-from fastapi.middleware.cors import CORSMiddleware  # ⭐️ 이거 추가!
+from fastapi.middleware.cors import CORSMiddleware
+import os
+from openai import OpenAI  # ⭐️ GPT 도구 불러오기!
 
 app = FastAPI()
 
-# ⭐️ 외부 웹사이트(친구)에서 내 서버에 접속할 수 있게 허락해 주는 방어막 해제 코드!
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 일단 테스트니까 모든 사이트 허용 ("*")
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# (CORS 설정 및 Supabase 설정은 원래 있던 대로 유지)
 
-# --- (이 아래로는 원래 있던 SUPABASE_URL 등 기존 코드 그대로 유지!) ---
-# ⭐️ 여기에 아까 메모장 복사해둔 주소와 키를 따옴표 안에 넣으세요!
-SUPABASE_URL = "https://wmkynomraejengmwusyv.supabase.co"
-SUPABASE_KEY = "sb_publishable_OdRc1n8jnAsPpvjwZ87x-A_y1rJmEaW"
+# ⭐️ 1. 메모장에 적어둔 GPT API 키를 여기에 넣기
+# 기존에 진짜 키가 적혀있던 따옴표를 지우고 아래처럼 수정!
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") 
+gpt_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 데이터베이스(창고) 관리인 생성!
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# ⭐️ 2. GPT가 상황을 판단하는 함수 만들기
+def ask_gpt_to_cut_power(voltage, current, power, temperature):
+    # GPT에게 상황을 설명하고 지시를 내리는 '프롬프트'
+    prompt = f"""
+    너는 화재와 전력 낭비를 막는 스마트 멀티탭 AI야.
+    현재 센서 값:
+    - 전압: {voltage}V
+    - 전류: {current}A
+    - 소비 전력: {power}W
+    - 온도: {temperature}도
 
-# ⭐️ 라즈베리파이가 우리에게 보낼 데이터의 '모양'을 규칙으로 정해두기
-class PowerData(BaseModel):
-    device_id: str
-    voltage: float
-    current: float
-    power: float
-    temperature: float
-    is_on: bool
-    action_reason: str
+    위 수치를 보고, 화재 위험이 있거나 비정상적인 전력 낭비라고 판단되면 오직 "CUT" 이라고만 대답해.
+    정상적인 상황이라 계속 켜둬도 되면 오직 "KEEP" 이라고만 대답해. 다른 부연 설명은 절대 하지 마.
+    """
 
-# 문 1 (POST): 라즈베리파이가 데이터 보낼 때 들어오는 문
+    try:
+        # GPT에게 질문 쏘기 (gpt-4o-mini 모델이 제일 빠르고 가성비가 좋아!)
+        response = gpt_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=10,
+            temperature=0.1
+        )
+        
+        # GPT의 대답 꺼내기
+        decision = response.choices[0].message.content.strip()
+        print(f"GPT의 판단: {decision}")
+        
+        if decision == "CUT":
+            return True  # 전원 차단해라!
+        else:
+            return False # 차단하지 마라!
+            
+    except Exception as e:
+        print("GPT 통신 에러:", e)
+        return False # 에러 나면 일단 끄지 말고 대기
+
+# ⭐️ 3. 데이터가 들어올 때 GPT에게 먼저 물어보기
 @app.post("/upload-data")
 def upload_data(data: PowerData):
-    # 받은 데이터를 Supabase의 'sensor_data' 테이블에 집어넣기
-    # (주의: 만약 아까 만든 테이블 이름이 다르면 sensor_data 부분을 그 이름으로 바꿔야 해!)
-    response = supabase.table("sensor_data").insert(data.dict()).execute()
-    return {"message": "DB에 데이터 저장 성공!", "result": response.data}
+    
+    # [일반 안전 로직] 온도가 80도를 넘으면 GPT 물어볼 것도 없이 무조건 차단!
+    if data.temperature >= 80.0:
+        data.is_on = False
+        data.action_reason = "과열 감지: 즉시 강제 차단"
+        
+    # [AI 판단 로직] 그 외의 상황은 GPT에게 물어봐서 판단!
+    else:
+        is_danger = ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature)
+        if is_danger:
+            data.is_on = False
+            data.action_reason = "AI 판단: 위험 및 낭비 감지 차단"
+        else:
+            data.action_reason = "정상 작동"
 
-# 문 2 (GET): 친구(웹 화면)가 데이터 달라고 할 때 나가는 문
-@app.get("/get-data")
-def get_data():
-    # Supabase 창고에서 최신 데이터 10개만 꺼내서 돌려주기
-    response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(10).execute()
-    return response.data
+    # 최종 결과 DB에 저장
+    response = supabase.table("sensor_data").insert(data.dict()).execute()
+    return {"message": "데이터 처리 성공", "result": response.data}
