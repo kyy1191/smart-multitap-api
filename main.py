@@ -7,7 +7,6 @@ from openai import OpenAI
 
 app = FastAPI()
 
-# 1. CORS 설정 (친구 웹사이트가 접속할 수 있게 해주는 방어막 해제)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,19 +15,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. Supabase 설정 (환경 변수 사용)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# 3. GPT 설정 (환경 변수 사용)
 gpt_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# ⭐️ 4. 데이터 구조 정의 (port_number 항목 추가!)
+# ⭐️ [핵심 1] 서버의 메모리 장부! (한 번 꺼지면 잠가버리기 위함)
+# True면 켜짐(허용), False면 꺼짐(완전 차단)
+port_power_state = {
+    1: True,
+    2: True,
+    3: True,
+    4: True
+}
+
 class PowerData(BaseModel):
+    room: str
     device_id: str
-    room: str 
-    port_number: int  # 👈 P1, P2, P3, P4 포트를 구분하기 위한 숫자형 변수 추가!
+    port_number: int
     voltage: float
     current: float
     power: float
@@ -36,14 +40,36 @@ class PowerData(BaseModel):
     is_on: bool
     action_reason: str
 
-# ⭐️ 5. 친구 웹사이트를 위한 GET (최근 4개 포트 데이터 한 번에 주기)
+# 프론트엔드 수동 조작용 데이터 구조
+class ControlData(BaseModel):
+    port_number: int
+    is_on: bool
+
 @app.get("/get-data")
 def get_data():
-    # Supabase에서 가장 최근에 들어온 데이터 4개를 순서대로 가져옴
     response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(4).execute()
     return response.data
 
-# 6. GPT 차단 여부 판단 함수
+@app.get("/esg-report")
+def get_esg_report():
+    try:
+        response = supabase.table("sensor_data").select("*").like("action_reason", "%차단%").execute()
+        cut_count = len(response.data)
+        saved_kwh = round(cut_count * 0.36, 1) 
+        saved_money = int(saved_kwh * 430) 
+        saved_carbon = round(saved_kwh * 0.478, 1) 
+        return {"cut_count": cut_count, "saved_kwh": saved_kwh, "saved_money": saved_money, "saved_carbon": saved_carbon}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ⭐️ [핵심 2] 앱에서 초록 버튼 누를 때 호출될 '원격 제어' 주소
+@app.post("/control")
+def control_port(req: ControlData):
+    # 앱에서 보낸 명령대로 서버 메모리 장부를 바꿈! (다시 켜주거나, 수동으로 끄거나)
+    port_power_state[req.port_number] = req.is_on
+    state_str = "켜짐" if req.is_on else "꺼짐"
+    return {"message": f"포트 {req.port_number} 전원 {state_str} 상태로 앱에서 수동 변경 완료!"}
+
 def ask_gpt_to_cut_power(voltage, current, power, temperature):
     prompt = f"현재 센서값: 전압{voltage}V, 전류{current}A, 전력{power}W, 온도{temperature}도. 위험하거나 낭비면 'CUT', 아니면 'KEEP'이라고만 답해."
     try:
@@ -57,44 +83,30 @@ def ask_gpt_to_cut_power(voltage, current, power, temperature):
     except:
         return False
 
-# 7. 라즈베리파이(또는 테스트용 Swagger)로부터 데이터 받는 POST
 @app.post("/upload-data")
 def upload_data(data: PowerData):
-    # 위험 감지 및 AI 판단 로직 수행
-    if data.temperature >= 80.0:
+    # 1. 먼저 메모리 장부를 확인! (수동으로 껐거나, 과열로 한 번 차단된 적이 있다면?)
+    if port_power_state[data.port_number] == False:
+        # 센서가 무슨 값을 보내든 싹 다 강제로 무시하고 0으로 만들어버림!
         data.is_on = False
-        data.action_reason = f"포트 {data.port_number} 과열 감지: 즉시 강제 차단"
-    elif ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature):
-        data.is_on = False
-        data.action_reason = f"AI 판단: 포트 {data.port_number} 위험 및 낭비 감지 차단"
-    else:
-        data.action_reason = "정상 작동"
+        data.voltage = 0.0
+        data.current = 0.0
+        data.power = 0.0
+        data.action_reason = "차단 유지 중 (앱에서 다시 켜기 대기)"
     
-    # DB에 데이터 저장
+    # 2. 전원이 켜져 있을 때만 위험 감지 로직 수행
+    else:
+        if data.temperature >= 80.0:
+            data.is_on = False
+            data.action_reason = f"포트 {data.port_number} 과열 감지: 즉시 강제 차단"
+            # ⭐️ 위험해서 차단했으니 메모리 장부도 False로 잠가버림!
+            port_power_state[data.port_number] = False 
+        elif ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature):
+            data.is_on = False
+            data.action_reason = f"AI 판단: 포트 {data.port_number} 위험 및 낭비 차단"
+            port_power_state[data.port_number] = False
+        else:
+            data.action_reason = "정상 작동"
+    
     supabase.table("sensor_data").insert(data.dict()).execute()
     return {"message": "데이터 처리 성공", "result": data}
-# ⭐️ 8. 이번 달 ESG 및 요금 절감 리포트 API
-@app.get("/esg-report")
-def get_esg_report():
-    try:
-        # 1. DB에서 AI가 차단한 기록만 싹 가져오기 (action_reason에 '차단'이 포함된 데이터)
-        response = supabase.table("sensor_data").select("*").like("action_reason", "%차단%").execute()
-        cut_data = response.data
-        
-        # 2. 차단 횟수 계산
-        cut_count = len(cut_data)
-        
-        # 3. 절약 전력량(kWh) 및 요금, 탄소 감소량 계산 (임시 로직)
-        # 실제로는 누적 시간을 곱해야 하지만, 메이커톤 시연용으로 차단 1회당 평균 0.36kWh를 아꼈다고 가정!
-        saved_kwh = round(cut_count * 0.36, 1) 
-        saved_money = int(saved_kwh * 430)  # 1kWh당 약 430원 (누진세 가정)
-        saved_carbon = round(saved_kwh * 0.478, 1) # 1kWh당 탄소배출계수 약 0.478kg
-        
-        return {
-            "cut_count": cut_count,          # 자동 차단 횟수
-            "saved_kwh": saved_kwh,          # 절약 전력 (kWh)
-            "saved_money": saved_money,      # 예상 절약 금액 (원)
-            "saved_carbon": saved_carbon     # 탄소 배출 감소 (kg CO2)
-        }
-    except Exception as e:
-        return {"error": str(e)}
