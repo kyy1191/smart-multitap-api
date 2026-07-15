@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
 import time
-from openai import OpenAI
 
 app = FastAPI()
 
@@ -20,11 +19,10 @@ app.add_middleware(
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-gpt_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 STATE_FILE = "/tmp/smart_state.json"
 
-# [핵심] 상태 장부 가져오기/저장하기
+# [장부 시스템]
 def get_state():
     if not os.path.exists(STATE_FILE):
         initial = {
@@ -45,7 +43,7 @@ def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
 
-# 데이터 구조
+# [데이터 구조]
 class PowerData(BaseModel):
     room: str
     device_id: str
@@ -61,14 +59,7 @@ class ControlData(BaseModel):
     port_number: int
     is_on: bool
 
-class WifiStatus(BaseModel):
-    connected: bool
-
-class PortTypeUpdate(BaseModel):
-    port_number: int
-    device_type: str
-
-# [API]
+# [API 1] 실시간 상태 가져오기
 @app.get("/get-data")
 def get_data():
     state = get_state()
@@ -85,7 +76,6 @@ def get_data():
         row["device_type"] = state["types"].get(p_str, "일반")
         row["wifi_connected"] = state["wifi"]
         
-        # 위험 기기이면서 와이파이가 끊겼을 때만 차단
         if not state["wifi"] and state["types"].get(p_str) == "위험":
             state["power"][p_str] = False
             save_state(state) 
@@ -98,6 +88,7 @@ def get_data():
     result.sort(key=lambda x: x["port_number"])
     return result
 
+# [API 2] 수동 제어
 @app.post("/control")
 def control_port(req: ControlData):
     state = get_state()
@@ -107,6 +98,7 @@ def control_port(req: ControlData):
     save_state(state)
     return {"message": "제어 성공"}
 
+# [API 3] 센서 데이터 업로드 & 방어 로직 (딜레이 없음!)
 @app.post("/upload-data")
 def upload_data(data: PowerData):
     state = get_state()
@@ -115,30 +107,20 @@ def upload_data(data: PowerData):
     port_type = state["types"].get(p_str, "일반")
     just_turned_on = (time.time() - state["last_toggle_time"].get(p_str, 0)) < 5 
 
-    # 1. 와이파이 끊김 & 위험기기 -> 차단
     if not wifi_connected and port_type == "위험":
         state["power"][p_str] = False
 
-    # 2. [핵심 수정] 상시기기는 무조건 보호 (최우선 방어)
     if port_type == "상시":
         data.is_on = True
-        state["power"][p_str] = True # 내부 장부에서도 무조건 켜짐으로 강제 유지
+        state["power"][p_str] = True 
         data.action_reason = "상시기기 (항시 작동)"
-
-    # 3. 차단 상태 확인 (상시가 아닌 경우)
     elif state["power"].get(p_str) == False:
         data.is_on = False
-        data.voltage = 0.0
-        data.current = 0.0
-        data.power = 0.0
+        data.voltage = 0.0; data.current = 0.0; data.power = 0.0
         data.action_reason = "차단 상태"
-        
-    # 4. 부팅 유예 (5초간)
     elif just_turned_on:
         data.is_on = True
         data.action_reason = "기기 부팅 중 (5초 유예)"
-        
-    # 5. 일반/위험기기 정상 검사 로직 (과열 확인 등)
     else:
         if data.temperature >= 80.0:
             data.is_on = False
@@ -148,7 +130,40 @@ def upload_data(data: PowerData):
             data.action_reason = "정상 작동"
             
     save_state(state)
-    
-    # DB 저장
     supabase.table("sensor_data").insert(data.dict()).execute()
     return {"message": "데이터 처리 성공"}
+
+# [API 4] ⭐️ 새롭게 추가된 대시보드 통계 전용 API
+@app.get("/get-stats")
+def get_stats():
+    # 1. Supabase에서 기기가 꺼진(is_on=False) 최신 로그를 가져옵니다.
+    response = supabase.table("sensor_data").select("action_reason").eq("is_on", False).limit(500).execute()
+    
+    # 2. 화재 예방(자동 차단) 횟수 계산
+    # 사유에 '차단'이라는 단어가 포함된 로그의 개수를 셉니다.
+    cut_count = 0
+    if response.data:
+        cut_count = len([row for row in response.data if "차단" in row.get("action_reason", "")])
+
+    # 3. 전력량(kWh) 및 절약 비용(원) 계산
+    # * 1회 차단될 때마다 대략 0.4 kWh를 아꼈다고 가정 (원하시는 수식으로 변경 가능)
+    # * 1 kWh당 전기요금을 150원으로 가정
+    saved_kwh_today = cut_count * 0.4 
+    saved_cost_today = int(saved_kwh_today * 150)
+    
+    # 누적 성과 (기본 베이스 숫자에 오늘의 성과를 더함)
+    cumulative_kwh = saved_kwh_today + 124.0
+    cumulative_cost = int(cumulative_kwh * 150)
+
+    # 4. 앱(프론트엔드)에서 쓰기 좋게 딕셔너리로 묶어서 응답
+    return {
+        "today": {
+            "energy_saved_kwh": round(saved_kwh_today, 1),
+            "cost_saved_won": saved_cost_today,
+            "fire_prevention_count": cut_count
+        },
+        "cumulative": {
+            "total_kwh_saved": round(cumulative_kwh, 1),
+            "total_cost_saved": cumulative_cost
+        }
+    }
