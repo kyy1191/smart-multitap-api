@@ -27,6 +27,7 @@ gpt_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 # ⭐️ 4. 데이터 구조 정의 (port_number 항목 추가!)
 class PowerData(BaseModel):
     device_id: str
+    room: str 
     port_number: int  # 👈 P1, P2, P3, P4 포트를 구분하기 위한 숫자형 변수 추가!
     voltage: float
     current: float
