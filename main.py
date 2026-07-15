@@ -108,27 +108,44 @@ def upload_data(data: PowerData):
     p_str = str(data.port_number)
     wifi_connected = state["wifi"]
     port_type = state["types"].get(p_str, "일반")
+    
+    # [수정] 5초 유예 시간 확인
     just_turned_on = (time.time() - state["last_toggle_time"].get(p_str, 0)) < 5 
 
+    # 1. 위험기기 + 와이파이 끊김 -> 즉시 차단
     if not wifi_connected and port_type == "위험":
         state["power"][p_str] = False
 
+    # 2. 강제 차단 상태인지 확인
     if state["power"].get(p_str) == False:
         data.is_on = False
         data.voltage = 0.0
         data.current = 0.0
         data.power = 0.0
         data.action_reason = "차단 상태"
+            
+    # 3. 부팅 중 5초 유예
     elif just_turned_on:
         data.is_on = True
         data.action_reason = "기기 부팅 중 (5초 유예)"
+        
+    # ⭐️ [핵심 추가] 상시기기는 AI/과열 체크를 건너뛰고 무조건 켜짐 유지!
+    elif port_type == "상시":
+        data.is_on = True
+        data.action_reason = "상시기기 (항시 작동)"
+
+    # 4. 그 외(일반/위험기기)는 정상적으로 AI 판단 수행
     else:
-        # 정상 검사 로직...
         if data.temperature >= 80.0:
             data.is_on = False
             data.action_reason = "과열 차단"
             state["power"][p_str] = False
-        # ... (나머지 로직)
+        elif ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature):
+            data.is_on = False
+            data.action_reason = "AI 판단: 위험 차단"
+            state["power"][p_str] = False
+        else:
+            data.action_reason = "정상 작동"
     
     save_state(state)
     supabase.table("sensor_data").insert(data.dict()).execute()
