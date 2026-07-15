@@ -2,30 +2,41 @@ import requests
 import time
 import random
 
-# 네 Render 서버 주소! (뒤에 /upload-data 붙임)
 URL = "https://smart-multitap-api.onrender.com/upload-data"
 
-print("🚀 가짜 라즈베리파이 센서 가동 시작! (Ctrl+C를 누르면 멈춥니다)")
+print("🚀 가짜 라즈베리파이 가동! (2번 포트의 온도가 실시간으로 오르락내리락 합니다!)")
+
+# ⭐️ 2번 포트의 초기 온도와 변화 방향 설정
+p2_temp = 70.0
+p2_direction = 1  # 1이면 가열 중(온도 상승), -1이면 냉각 중(온도 하강)
 
 while True:
     try:
-        # 4개의 포트 데이터를 한 번씩 쏨
+        # ⭐️ 2번 포트 온도 변화 로직 (한 바퀴 돌 때마다 온도가 바뀜)
+        if p2_direction == 1:
+            p2_temp += random.uniform(2.0, 4.0)  # 2~4도씩 팍팍 상승!
+            if p2_temp >= 85.0:
+                p2_direction = -1  # 85도 찍으면 식기 시작
+        else:
+            p2_temp -= random.uniform(2.0, 4.0)  # 2~4도씩 쿨링!
+            if p2_temp <= 70.0:
+                p2_direction = 1   # 70도까지 식으면 다시 가열 시작
+
         for port in range(1, 5):
             
-            # 각 포트별 컨셉 설정 (UI에서 그래프가 예쁘게 변하도록!)
-            if port == 1: # P1: 상시기기 (거실 TV 컨셉 - 전력 변화 적음)
+            if port == 1: # P1: 정상 (TV)
                 volt = random.uniform(219.0, 221.0)
                 curr = random.uniform(1.0, 1.2)
                 temp = random.uniform(28.0, 30.0)
                 action = "TV 시청중"
                 
-            elif port == 2: # P2: 위험기기 (고데기 컨셉 - 온도 계속 올라감)
+            elif port == 2: # P2: 🎢 온도 오르락내리락 (80도 넘으면 서버가 차단함)
                 volt = random.uniform(215.0, 220.0)
-                curr = random.uniform(5.0, 6.5)
-                temp = random.uniform(50.0, 75.0) # 온도가 높음!
-                action = "고데기 사용중"
+                curr = random.uniform(10.0, 12.0)
+                temp = p2_temp # 위에서 계산한 오르락내리락 온도를 쏙!
+                action = "고데기 작동중"
                 
-            elif port == 3: # P3: 충전기 (대기전력 컨셉 - 매우 낮음)
+            elif port == 3: # P3: 정상 (스마트폰 충전기)
                 volt = random.uniform(220.0, 220.5)
                 curr = random.uniform(0.05, 0.1)
                 temp = random.uniform(24.0, 25.0)
@@ -37,34 +48,34 @@ while True:
                 temp = 24.0
                 action = "대기중"
 
-            # 보낼 데이터 포장
             data = {
                 "room": "거실",
-                "device_id": "multitap1",  # ⭐️ 여기를 'multitap1'으로 고정!
-                "port_number": port,       # ⭐️ 포트 번호로만 구분!
+                "device_id": "multitap1",
+                "port_number": port,
                 "voltage": round(volt, 2),
                 "current": round(curr, 2),
                 "power": round(volt * curr, 2),
                 "temperature": round(temp, 2),
-                "is_on": True,
+                "is_on": True, # 센서는 무조건 켜져있다고 보내지만, 80도 넘으면 서버가 False로 쳐냄!
                 "action_reason": action
             }
 
-            # 서버로 데이터 발사!
             response = requests.post(URL, json=data)
             
             if response.status_code == 200:
-                print(f"✅ P{port} 전송 성공: {data['power']}W / {data['temperature']}도")
+                # 콘솔에서 온도 변화를 한눈에 볼 수 있게 출력!
+                if port == 2:
+                    print(f"🔥 P2 (고데기) 현재 온도: {data['temperature']}도")
+                else:
+                    print(f"✅ P{port} 전송 성공: {data['power']}W / {data['temperature']}도")
             else:
                 print(f"❌ P{port} 전송 실패: {response.status_code}")
                 
-            # 1초 대기 후 다음 포트 발사
             time.sleep(1)
 
         print("-" * 40)
-        # 4개 다 쏘고 3초 쉬었다가 다시 반복!
-        time.sleep(3)
+        time.sleep(2) # 조금 더 빠르게 변하는 걸 보려고 대기 시간을 2초로 줄임
 
     except Exception as e:
-        print("에러 발생! 서버가 켜져 있는지 확인해봐:", e)
+        print("에러 발생:", e)
         time.sleep(5)
