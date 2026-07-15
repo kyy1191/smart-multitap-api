@@ -73,3 +73,28 @@ def upload_data(data: PowerData):
     # DB에 데이터 저장
     supabase.table("sensor_data").insert(data.dict()).execute()
     return {"message": "데이터 처리 성공", "result": data}
+# ⭐️ 8. 이번 달 ESG 및 요금 절감 리포트 API
+@app.get("/esg-report")
+def get_esg_report():
+    try:
+        # 1. DB에서 AI가 차단한 기록만 싹 가져오기 (action_reason에 '차단'이 포함된 데이터)
+        response = supabase.table("sensor_data").select("*").like("action_reason", "%차단%").execute()
+        cut_data = response.data
+        
+        # 2. 차단 횟수 계산
+        cut_count = len(cut_data)
+        
+        # 3. 절약 전력량(kWh) 및 요금, 탄소 감소량 계산 (임시 로직)
+        # 실제로는 누적 시간을 곱해야 하지만, 메이커톤 시연용으로 차단 1회당 평균 0.36kWh를 아꼈다고 가정!
+        saved_kwh = round(cut_count * 0.36, 1) 
+        saved_money = int(saved_kwh * 430)  # 1kWh당 약 430원 (누진세 가정)
+        saved_carbon = round(saved_kwh * 0.478, 1) # 1kWh당 탄소배출계수 약 0.478kg
+        
+        return {
+            "cut_count": cut_count,          # 자동 차단 횟수
+            "saved_kwh": saved_kwh,          # 절약 전력 (kWh)
+            "saved_money": saved_money,      # 예상 절약 금액 (원)
+            "saved_carbon": saved_carbon     # 탄소 배출 감소 (kg CO2)
+        }
+    except Exception as e:
+        return {"error": str(e)}
