@@ -40,8 +40,8 @@ while True:
             # 보낼 데이터 포장
             data = {
                 "room": "거실",
-                "device_id": "multitap_main",
-                "port_number": port,
+                "device_id": "multitap1",  # ⭐️ 여기를 'multitap1'으로 고정!
+                "port_number": port,       # ⭐️ 포트 번호로만 구분!
                 "voltage": round(volt, 2),
                 "current": round(curr, 2),
                 "power": round(volt * curr, 2),
