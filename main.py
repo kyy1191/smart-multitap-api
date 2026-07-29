@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
 import time
+import asyncio
 from typing import List, Optional
 from openai import OpenAI
 
@@ -56,6 +57,13 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 gpt_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 STATE_FILE = "/tmp/smart_state.json"
+
+# [실시간 메모리 캐시 & Supabase 배치 버퍼 레지스터]
+latest_live_cache = {}  # { port_number: dict } -> 웹 대시보드 즉시 반환용 (실시간)
+db_buffer = []          # [ dict, ... ] -> Supabase 모아서 분할 저장용 (버퍼링)
+last_flush_time = time.time()
+FLUSH_INTERVAL = 10      # 10초 주기 DB 저장
+MAX_BUFFER_SIZE = 10     # 10개 누적 시 저장
 
 # [장부 시스템]
 def get_state():
@@ -131,36 +139,70 @@ def ask_gpt_to_cut_power(voltage, current, power, temperature):
         print("GPT 통신 에러:", e)
         return False
 
-# [API 1] 실시간 상태 가져오기 (웹 대시보드 연동)
+# [Supabase DB 배치 플러시 함수]
+def flush_db_buffer():
+    global db_buffer, last_flush_time
+    if not db_buffer or not supabase:
+        return
+    try:
+        data_to_insert = list(db_buffer)
+        db_buffer.clear()
+        last_flush_time = time.time()
+        supabase.table("sensor_data").insert(data_to_insert).execute()
+        print(f"[Supabase 배치 저장 완료] {len(data_to_insert)}개 데이터 저장됨.")
+    except Exception as e:
+        print("[Supabase 배치 저장 에러]:", e)
+
+# [API 1] 실시간 상태 가져오기 (웹 대시보드 연동: 메모리 캐시 + DB 최신 조합)
 @app.get("/get-data")
 def get_data():
     state = get_state()
-    if not supabase:
-        return []
-    try:
-        response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(16).execute()
-        latest_data = {}
-        for row in response.data:
-            p = row.get("port_number", 1)
-            if p not in latest_data:
-                latest_data[p] = row
+    latest_data = {}
+
+    # 1. DB에서 기존 최신 로그 가져오기
+    if supabase:
+        try:
+            response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(20).execute()
+            if response.data:
+                for row in response.data:
+                    p = row.get("port_number", 1)
+                    if p not in latest_data:
+                        latest_data[p] = row
+        except Exception as e:
+            print("DB get-data 에러:", e)
+
+    # 2. 실시간 메모리 캐시 데이터가 있으면 최신 실시간 수치로 덮어쓰기 (즉시 표출)
+    for p, live_row in latest_live_cache.items():
+        latest_data[p] = dict(live_row)
+
+    # 기본값 보장 (포트 1 ~ 4)
+    for p_num in range(1, 5):
+        if p_num not in latest_data:
+            latest_data[p_num] = {
+                "device_id": "smart_multitap_1",
+                "room": "거실",
+                "port_number": p_num,
+                "voltage": 0.0,
+                "current": 0.0,
+                "power": 0.0,
+                "temperature": 25.0,
+                "is_on": state["power"].get(str(p_num), True),
+                "action_reason": "정상 작동"
+            }
+
+    result = list(latest_data.values())
+    for row in result:
+        p_str = str(row.get("port_number", 1))
+        row["device_type"] = state["types"].get(p_str, "일반")
+        row["wifi_connected"] = state.get("wifi", True)
         
-        result = list(latest_data.values())
-        for row in result:
-            p_str = str(row.get("port_number", 1))
-            row["device_type"] = state["types"].get(p_str, "일반")
-            row["wifi_connected"] = state.get("wifi", True)
-            
-            if state["power"].get(p_str) == False:
-                row["is_on"] = False
-                row["power"] = 0.0
-                row["action_reason"] = "차단 상태"
-                
-        result.sort(key=lambda x: x.get("port_number", 1))
-        return result
-    except Exception as e:
-        print("get_data 에러:", e)
-        return []
+        if state["power"].get(p_str) == False:
+            row["is_on"] = False
+            row["power"] = 0.0
+            row["action_reason"] = "차단 상태"
+
+    result.sort(key=lambda x: x.get("port_number", 1))
+    return result
 
 # [API 2] 수동 제어
 @app.post("/control")
@@ -170,7 +212,11 @@ async def control_port(req: ControlData):
     if req.is_on:
         state["last_toggle_time"][str(req.port_number)] = time.time()
     save_state(state)
-    
+
+    # 실시간 캐시 업데이트
+    if req.port_number in latest_live_cache:
+        latest_live_cache[req.port_number]["is_on"] = req.is_on
+
     # 웹소켓 브로드캐스트 (게이트웨이에 제어 명령 전달)
     control_msg = {
         "event": "control",
@@ -189,11 +235,11 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data_text = await websocket.receive_text()
             data_json = json.loads(data_text)
-            
+
             if data_json.get("event") == "sensor_upload":
                 payload = data_json.get("data", {})
                 power_data = PowerData(**payload)
-                upload_data(power_data)
+                process_sensor_data(power_data)
                 await websocket.send_json({"status": "ok", "port": power_data.port_number})
     except WebSocketDisconnect:
         manager.disconnect(websocket)
@@ -201,9 +247,9 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         manager.disconnect(websocket)
 
-# [API 3] 센서 데이터 업로드 & Supabase DB 저장
-@app.post("/upload-data")
-def upload_data(data: PowerData):
+# [API 3] 센서 데이터 수신 처리 (실시간 표출 + DB 버퍼링)
+def process_sensor_data(data: PowerData):
+    global db_buffer, last_flush_time
     state = get_state()
     p_str = str(data.port_number)
     port_type = state["types"].get(p_str, "일반")
@@ -235,17 +281,24 @@ def upload_data(data: PowerData):
                 data.action_reason = "정상 작동"
             
     save_state(state)
-    
-    # Supabase DB 저장
-    res_data = None
-    if supabase:
-        try:
-            res = supabase.table("sensor_data").insert(data.dict()).execute()
-            res_data = res.data
-        except Exception as e:
-            print("Supabase insert 에러:", e)
-            
-    return {"message": "데이터 처리 성공", "result": res_data}
+
+    data_dict = data.dict()
+    # ⚡ 1. 실시간 표출용 메모리 캐시에 즉시 업데이트 (대시보드는 항상 최신 실시간 수치 표시)
+    latest_live_cache[data.port_number] = data_dict
+
+    # 📦 2. Supabase DB 저장을 위해 버퍼에 누적
+    db_buffer.append(data_dict)
+
+    # 3. 버퍼 개수가 모였거나 일정 시간이 지나면 DB에 모아서 저장 (배치 인서트)
+    if len(db_buffer) >= MAX_BUFFER_SIZE or (time.time() - last_flush_time) >= FLUSH_INTERVAL:
+        flush_db_buffer()
+
+    return data_dict
+
+@app.post("/upload-data")
+def upload_data(data: PowerData):
+    res_dict = process_sensor_data(data)
+    return {"message": "데이터 처리 성공", "result": res_dict}
 
 # [API 4] 대시보드 통계 API
 @app.get("/get-stats")
