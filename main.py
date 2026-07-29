@@ -340,7 +340,8 @@ def process_sensor_data(data: PowerData):
             data.action_reason = "정상 작동"
             
             # (GPT 판단은 딜레이가 심하므로, 50W 이상이거나 온도가 60도 이상일 때만 10초에 한 번 선별적 호출로 최적화)
-            if data.power > 50.0 or data.temperature > 60.0:
+            # 실제 센서 단위는 mW이므로 50W = 50000mW로 비교해야 함 (mW 그대로 비교하면 거의 모든 부하에서 AI가 호출되어 사소한 부하도 오탐 차단됨)
+            if data.power > 50000.0 or data.temperature > 60.0:
                 last_gpt = state.get("last_gpt_time", {}).get(p_str, 0)
                 if time.time() - last_gpt > 10:
                     state.setdefault("last_gpt_time", {})[p_str] = time.time()
