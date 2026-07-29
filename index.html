@@ -3060,18 +3060,14 @@
                                 // 🟢 [해결 1] 하드웨어가 켜질 시간을 벌어주기 위해 방패를 1.5초(1500ms)로 넉넉하게 늘립니다.
                                 const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
 
-                                // 🔌 물리 스위치가 릴레이와 별개로 붙어있는 일반(Normal) 포트는 서버의 is_on 플래그가 실배선과
-                                // 어긋날 수 있으므로 실측 전력이 임계값을 넘는지로 켜짐/꺼짐을 판단한다 (대기전력만 흐르면 꺼짐 표시).
-                                // 상시(Always-on) 포트는 서버가 항상 is_on=true로 강제하는 게 정상 동작이므로 그대로 믿는다
-                                // (TV처럼 대기전력이 임계값보다 낮은 상시기기까지 임계값을 적용하면 항상 꺼짐으로 오판된다).
+                                // 🔌 물리 스위치가 릴레이와 별개로 붙어있어 서버의 on/off 플래그(is_on)가 실배선과 어긋날 수 있으므로,
+                                // 실측 전력이 임계값을 넘는지로 켜짐/꺼짐을 판단한다 (대기전력만 흐르면 꺼짐으로 표시). 모든 포트 동일 적용.
                                 // ⚠️ sensor.power는 이미 mW 단위 숫자이므로 그대로 비교/표시한다 (W로 착각해 ×1000/÷1000 하지 말 것).
                                 const powerVal = parseFloat(sensor.power) || 0;
                                 const isOnByPower = powerVal > POWER_ON_THRESHOLD_MW;
-                                const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
-                                const rawIsOn = port.type === 'Always-on' ? serverIsOn : isOnByPower;
 
-                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 위에서 정한 기준을 따름!
-                                const isOn = isLocked ? (port.status === 'On') : rawIsOn;
+                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 실측 전력 기준을 따름!
+                                const isOn = isLocked ? (port.status === 'On') : isOnByPower;
 
                                 let newContinuous = port.continuousUsage || 0;
                                 if (!isOn || (isOn && port.status === 'Off')) {
@@ -3159,9 +3155,7 @@
                                             const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
                                             const powerVal = parseFloat(sensor.power) || 0;
                                             const isOnByPower = powerVal > POWER_ON_THRESHOLD_MW;
-                                            const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
-                                            const rawIsOn = port.type === 'Always-on' ? serverIsOn : isOnByPower;
-                                            const isOn = isLocked ? (port.status === 'On') : rawIsOn;
+                                            const isOn = isLocked ? (port.status === 'On') : isOnByPower;
 
                                             let newContinuous = port.continuousUsage || 0;
                                             if (!isOn || (isOn && port.status === 'Off')) newContinuous = 0;
