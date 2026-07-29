@@ -237,6 +237,19 @@ async def control_port(req: ControlData):
     await manager.broadcast(control_msg)
     return {"message": "제어 성공"}
 
+# [API 2.2] Supabase DB 센서 데이터 전체 초기화
+@app.post("/clear-db")
+def clear_db():
+    if not supabase:
+        return {"status": "error", "message": "Supabase 연동이 끊겨 있습니다."}
+    try:
+        # Created_at이 존재하는 모든 데이터 삭제 (eq 대신 neq 등으로 전체 선택 혹은 gte 활용)
+        res = supabase.table("sensor_data").delete().neq("created_at", "").execute()
+        return {"status": "success", "message": f"DB 센서 데이터 전체 초기화 성공 (삭제됨)"}
+    except Exception as e:
+        print("DB 초기화 에러:", e)
+        return {"status": "error", "message": str(e)}
+
 # [API 2.5] 라즈베리파이/PC 게이트웨이 전용 실시간 웹소켓 엔드포인트
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
