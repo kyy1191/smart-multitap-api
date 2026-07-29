@@ -133,8 +133,8 @@ def ask_gpt_to_cut_power(voltage, current, power, temperature):
     - 소비 전력: {power}mW
     - 온도: {temperature}도
 
-    위 수치를 보고, 화재 위험이 있거나 비정상적인 전력 낭비라고 판단되면 오직 "CUT" 이라고만 대답해.
-    정상적인 상황이라 계속 켜둬도 되면 오직 "KEEP" 이라고만 대답해. 다른 부연 설명은 절대 하지 마.
+    위 수치를 보고 화재 위험이 있거나, 비정상적인 낭비, 또는 기기를 사용하지 않는 미세전력/대기전력 상태(예: 50mW 미만)라고 판단되면 즉시 전력을 차단하기 위해 오직 "CUT" 이라고만 대답해.
+    기기가 정상적으로 활발히 사용중이어서 계속 켜둬도 되면 오직 "KEEP" 이라고만 대답해. 다른 부연 설명은 절대 하지 마.
     """
     try:
         response = gpt_client.chat.completions.create(
@@ -301,11 +301,14 @@ def process_sensor_data(data: PowerData):
         data.action_reason = "상시기기 (항시 작동)"
     elif state["power"].get(p_str) == False:
         data.is_on = False
-        data.voltage = 0.0; data.current = 0.0; data.power = 0.0
         data.action_reason = "차단 상태"
     elif just_turned_on:
         data.is_on = True
         data.action_reason = "기기 부팅 중 (5초 유예)"
+    elif data.power <= 30.0:
+        data.is_on = False
+        data.action_reason = "대기전력 차단 (30mW 이하)"
+        state["power"][p_str] = False
     else:
         if data.temperature >= 80.0:
             data.is_on = False

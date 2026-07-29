@@ -644,7 +644,7 @@
         const INITIAL_STRIPS_DATA = [
             { 
                 id: 'strip-1', 
-                device_id: "smart_multitap_1",
+                device_id: "multitap1",
                 name: '멀티탭 1', 
                 room: '거실', 
                 ports: [
@@ -2479,33 +2479,76 @@
             ]);
             const [wifiLastUpdated, setWifiLastUpdated] = useState(null);
             const [showAllWifi, setShowAllWifi] = useState(false);
+            // 🟢 --- 여기서부터 붙여넣기 (외출 모드 상태 및 함수) ---
+            const [awaySchedules, setAwaySchedules] = useState([
+                {
+                    id: 1,
+                    days: ['월', '화', '수', '목', '금'],
+                    startHour: '08',
+                    startMin: '30',
+                    startAmpm: '오전',
+                    endHour: '06',
+                    endMin: '00',
+                    endAmpm: '오후'
+                }
+            ]);
 
-            // 🌐 SettingsPage가 열려있을 때 Wi-Fi 상태를 5초마다 서버에서 동기화
+            const toggleDay = (id, day) => {
+                setAwaySchedules(prev => prev.map(item => {
+                    if (item.id !== id) return item;
+                    const hasDay = item.days.includes(day);
+                    return { ...item, days: hasDay ? item.days.filter(d => d !== day) : [...item.days, day] };
+                }));
+            };
+
+            const updateSchedule = (id, field, value) => {
+                setAwaySchedules(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+            };
+
+            const addSchedule = () => {
+                setAwaySchedules(prev => [...prev, {
+                    id: Date.now(), days: ['월', '화', '수', '목', '금'], startHour: '09', startMin: '00', startAmpm: '오전', endHour: '06', endMin: '00', endAmpm: '오후'
+                }]);
+            };
+
+            const deleteSchedule = (id) => {
+                setAwaySchedules(prev => prev.filter(item => item.id !== id));
+            };
+            // 🟢 --- 여기까지 붙여넣기 ---
+
+            // 🌐 SettingsPage 열릴 때 실제 연결 상태 즉시 반영 + 변화 감지
             useEffect(() => {
-                const pollWifi = () => {
-                    fetch('https://smart-multitap-api.onrender.com/wifi-status')
-                        .then(res => res.json())
-                        .then(data => {
-                            if (data && data.ssid) {
-                                setCurrentSSID(data.ssid);
-                                setWifiLastUpdated(new Date().toLocaleTimeString());
-                            }
-                            if (typeof data.connected === 'boolean') {
-                                setWifiConnected(data.connected);
-                            }
-                            // 서버가 주변 네트워크 목록을 내려줄 경우 반영
-                            if (Array.isArray(data.nearby)) {
-                                setWifiList(data.nearby.map(n => ({
-                                    name: typeof n === 'string' ? n : n.name,
-                                    secure: typeof n === 'string' ? true : (n.secure !== false)
-                                })));
-                            }
-                        })
-                        .catch(() => {});
+                // 즉시 현재 상태 반영
+                const isOnline = navigator.onLine;
+                setWifiConnected(isOnline);
+                setWifiLastUpdated(new Date().toLocaleTimeString());
+
+                // 온라인/오프라인 이벤트로 실시간 감지
+                const handleOnline = () => {
+                    setWifiConnected(true);
+                    setWifiLastUpdated(new Date().toLocaleTimeString());
+                    if (onWifiChange) onWifiChange(true, currentSSID);
                 };
-                pollWifi();
-                const timer = setInterval(pollWifi, 5000);
-                return () => clearInterval(timer);
+                const handleOffline = () => {
+                    setWifiConnected(false);
+                    setWifiLastUpdated(new Date().toLocaleTimeString());
+                    if (onWifiChange) onWifiChange(false, currentSSID);
+                };
+
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+
+                // 5초마다 타임스탬프 갱신 (상태 변화 없어도 "살아있음" 표시)
+                const clock = setInterval(() => {
+                    setWifiLastUpdated(new Date().toLocaleTimeString());
+                    setWifiConnected(navigator.onLine);
+                }, 5000);
+
+                return () => {
+                    window.removeEventListener('online', handleOnline);
+                    window.removeEventListener('offline', handleOffline);
+                    clearInterval(clock);
+                };
             }, []);
 
             const connectWifi = (ssidName) => {
@@ -2649,60 +2692,78 @@
                             <section>
                                 <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-4 px-1">{language === 'KR' ? '외출 모드 설정' : 'Away Mode Settings'}</h3>
                                 <div className="space-y-4">
+                                    
+                                        {/* 🟢 여기서부터 붙여넣기 🟢 */}
                                     <div className="space-y-3">
-                                        {[0].map((_, idx) => (
-                                            <div key={idx} className="relative group">
+                                        {awaySchedules.map((schedule) => (
+                                            <div key={schedule.id} className="relative group">
                                                 <MinimalCard className="p-6">
+                                                    {/* 상단 헤더 & 삭제 버튼 */}
                                                     <div className="flex items-center justify-between mb-4">
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
-                                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                                                    <line x1="16" y1="2" x2="16" y2="6"/>
+                                                                    <line x1="8" y1="2" x2="8" y2="6"/>
+                                                                    <line x1="3" y1="10" x2="21" y2="10"/>
+                                                                </svg>
                                                             </div>
                                                             <div className="flex flex-col">
                                                                 <p className="text-sm font-bold text-gray-900">{language === 'KR' ? '외출 시간' : 'Away Time'}</p>
                                                                 <p className="text-xs text-gray-400 font-medium">{language === 'KR' ? '평소 외출하시는 시간대를 설정하세요' : 'Set your typical away time periods'}</p>
                                                             </div>
                                                         </div>
-                                                        <button className="text-gray-300 hover:text-red-400 transition-colors">
+                                                        <button type="button" onClick={() => deleteSchedule(schedule.id)} className="text-gray-300 hover:text-red-400 transition-colors p-1 rounded-lg hover:bg-red-50">
                                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                                         </button>
                                                     </div>
+
+                                                    {/* 요일 토글 버튼 */}
                                                     <div className="flex flex-wrap gap-1.5 mb-4">
-                                                        {['월', '화', '수', '목', '금', '토', '일'].map((day) => (
-                                                            <button key={day} className="flex-1 min-w-[32px] py-1.5 rounded-lg text-[10px] font-bold border border-gray-200 bg-white text-gray-400 hover:border-green-200 hover:text-green-600 transition-all active:bg-green-50 active:text-green-600 active:border-green-500">
-                                                                {day}
-                                                            </button>
-                                                        ))}
+                                                        {['월', '화', '수', '목', '금', '토', '일'].map((day) => {
+                                                            const isSelected = schedule.days.includes(day);
+                                                            return (
+                                                                <button 
+                                                                    key={day} type="button" onClick={() => toggleDay(schedule.id, day)}
+                                                                    className={`flex-1 min-w-[32px] py-1.5 rounded-lg text-[10px] font-bold transition-all border ${isSelected ? 'bg-green-500 border-green-500 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300'}`}
+                                                                >
+                                                                    {day}
+                                                                </button>
+                                                            );
+                                                        })}
                                                     </div>
+
+                                                    {/* 시간 설정 */}
                                                     <div className="flex items-center justify-between gap-2 bg-gray-50 p-3 rounded-2xl border border-gray-100">
                                                         <div className="flex items-center gap-1">
-                                                            <input type="text" maxLength="2" defaultValue="08" className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
+                                                            <input type="text" maxLength="2" value={schedule.startHour} onChange={(e) => updateSchedule(schedule.id, 'startHour', e.target.value)} className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
                                                             <span className="text-gray-300">:</span>
-                                                            <input type="text" maxLength="2" defaultValue="30" className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
-                                                            <select className="text-[10px] bg-white border border-gray-200 rounded px-1 py-0.5 font-bold text-gray-500 outline-none">
-                                                                <option>오전</option>
-                                                                <option>오후</option>
+                                                            <input type="text" maxLength="2" value={schedule.startMin} onChange={(e) => updateSchedule(schedule.id, 'startMin', e.target.value)} className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
+                                                            <select value={schedule.startAmpm} onChange={(e) => updateSchedule(schedule.id, 'startAmpm', e.target.value)} className="text-[10px] bg-white border border-gray-200 rounded px-1 py-0.5 font-bold text-gray-500 outline-none cursor-pointer">
+                                                                <option value="오전">오전</option><option value="오후">오후</option>
                                                             </select>
                                                         </div>
                                                         <span className="text-gray-300">~</span>
                                                         <div className="flex items-center gap-1">
-                                                            <input type="text" maxLength="2" defaultValue="18" className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
+                                                            <input type="text" maxLength="2" value={schedule.endHour} onChange={(e) => updateSchedule(schedule.id, 'endHour', e.target.value)} className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
                                                             <span className="text-gray-300">:</span>
-                                                            <input type="text" maxLength="2" defaultValue="00" className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
-                                                            <select className="text-[10px] bg-white border border-gray-200 rounded px-1 py-0.5 font-bold text-gray-500 outline-none">
-                                                                <option>오전</option>
-                                                                <option selected>오후</option>
+                                                            <input type="text" maxLength="2" value={schedule.endMin} onChange={(e) => updateSchedule(schedule.id, 'endMin', e.target.value)} className="w-6 text-center bg-transparent font-bold text-sm outline-none" />
+                                                            <select value={schedule.endAmpm} onChange={(e) => updateSchedule(schedule.id, 'endAmpm', e.target.value)} className="text-[10px] bg-white border border-gray-200 rounded px-1 py-0.5 font-bold text-gray-500 outline-none cursor-pointer">
+                                                                <option value="오전">오전</option><option value="오후">오후</option>
                                                             </select>
                                                         </div>
                                                     </div>
                                                 </MinimalCard>
                                             </div>
                                         ))}
-                                        <button className="w-full py-3 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 hover:text-green-600 hover:border-green-200 transition-all flex items-center justify-center gap-2 text-xs font-bold">
+
+                                        <button type="button" onClick={addSchedule} className="w-full py-3 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 hover:text-green-600 hover:border-green-200 hover:bg-green-50/30 transition-all flex items-center justify-center gap-2 text-xs font-bold">
                                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                             {language === 'KR' ? '외출 시간 추가하기' : 'Add Away Time'}
                                         </button>
                                     </div>
+                                    {/* 🟢 여기까지 붙여넣기 🟢 */}
                                     <MinimalCard className="p-6">
                                         <div className="flex items-center gap-3 mb-4">
                                             <div className="w-10 h-10 bg-yellow-50 text-yellow-600 rounded-2xl flex items-center justify-center">
@@ -2842,7 +2903,7 @@
             const [strips, setStrips] = useState(INITIAL_STRIPS_DATA);
             const [language, setLanguage] = useState('KR');
             const [wifiConnected, setWifiConnected] = useState(true); 
-            const [showAllWifi, setShowAllWifi] = useState(false);
+            
             const [currentSSID, setCurrentSSIDState] = useState(() => {
                 const stored = localStorage.getItem('smart_safe_wifi_ssid');
                 if (!stored || stored === '우리집_Wi-Fi' || stored === '연결된_Wi-Fi' || stored === 'JJINA_6') {
@@ -2965,135 +3026,157 @@
             }, []);     
             
             // 데이터 폴링 및 상태 업데이트
+            // 데이터 폴링 및 상태 업데이트
             const loadData = () => {
                 fetch("https://smart-multitap-api.onrender.com/get-data")
                     .then(res => res.json())
                     .then(data => {
-                        console.log("초기 로드 데이터:", data);
+                        console.log("받아온 데이터:", data);
                         setApiData(data);
-                        updateStripsState(data);
+
+                        setStrips(prev => prev.map(strip => ({
+                            ...strip,
+                            ports: strip.ports.map(port => {
+                                const sensor = data.find(d =>
+                                    d.device_id === strip.device_id &&
+                                    d.port_number === port.id
+                                );
+
+                                if (!sensor) return port;
+
+                                // 🟢 [해결 1] 하드웨어가 켜질 시간을 벌어주기 위해 방패를 1.5초(1500ms)로 넉넉하게 늘립니다.
+                                const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
+
+                                // 🟢 [해결 2] 서버에 기록된 진짜 스위치 상태
+                                const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
+
+                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 서버 상태를 따름!
+                                const isOn = isLocked ? (port.status === 'On') : serverIsOn;
+
+                                let newContinuous = port.continuousUsage || 0;
+                                if (!isOn || (isOn && port.status === 'Off')) {
+                                    newContinuous = 0;
+                                }
+
+                                return {
+                                    ...port,
+                                    // 🟢 [해결 4] 스위치가 잠겨있더라도, 전력과 온도 데이터는 서버에서 오는 즉시 화면에 바로 꽂아줍니다!
+                                    voltage: `${sensor.voltage} V`,
+                                    current: `${sensor.current} A`,
+                                    power: `${sensor.power} W`,
+                                    temperature: `${sensor.temperature} °C`,
+                                    status: isOn ? "On" : "Off",
+                                    continuousUsage: newContinuous 
+                                };
+                            })
+                        })));
                     })
                     .catch(console.error);
-
                 fetch("https://smart-multitap-api.onrender.com/get-stats")
                     .then(res => res.json())
                     .then(data => {
+                        console.log("실시간 통계 데이터 수신:", data);
                         setStats(data);
                     })
                     .catch(console.error);
             };
 
-            const updateStripsState = (data) => {
-                if (!data || !Array.isArray(data)) return;
-                setStrips(prev => prev.map(strip => ({
-                    ...strip,
-                    ports: strip.ports.map(port => {
-                        const sensor = data.find(d =>
-                            d.device_id === strip.device_id &&
-                            d.port_number === port.id
-                        );
-
-                        if (!sensor) return port;
-
-                        // 🟢 사용자가 스위치를 조작한 직후 8초 동안은 방패(Lock)가 걸려 UI가 클라이언트 상태를 강제 고정
-                        const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 8000);
-                        
-                        // 🟢 백엔드 서버 상태가 켜짐(true)인지 여부만 100% 신뢰
-                        const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
-                        const isOn = isLocked ? (port.status === 'On') : serverIsOn;
-
-                        let newContinuous = port.continuousUsage || 0;
-                        if (!isOn || (isOn && port.status === 'Off')) {
-                            newContinuous = 0;
-                        }
-
-                        return {
-                            ...port,
-                            // 🟢 스위치가 켜졌을 때만 전압/전류를 표출하고, 꺼져있다면 실제 센서 노이즈가 흐르든 말든 강제로 0 처리하여 혼란 방지
-                            voltage: isOn ? `${sensor.voltage} V` : '0 V',
-                            current: isOn ? `${sensor.current} A` : '0 A',
-                            power: isOn ? `${sensor.power} W` : '0 W',
-                            temperature: `${sensor.temperature} °C`,
-                            status: isOn ? "On" : "Off",
-                            continuousUsage: newContinuous 
-                        };
-                    })
-                })));
-            };
-
-            // 🌐 Wi-Fi 상태 실시간 동기화 (서버에서 폴링)
-            const syncWifiStatus = () => {
-                fetch('https://smart-multitap-api.onrender.com/wifi-status')
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data && data.ssid && data.ssid !== currentSSID) {
-                            setCurrentSSID(data.ssid);
-                        }
-                        if (typeof data.connected === 'boolean' && data.connected !== wifiConnected) {
-                            setWifiConnected(data.connected);
-                            if (!data.connected) setWifiDisconnectTime(Date.now());
-                            else setWifiDisconnectTime(null);
-                        }
-                    })
-                    .catch(() => {});
-            };
-
-            // 🟢 [WebSocket 실시간 스트리밍 도입]
+            // 🌐 Wi-Fi 연결/끊김 실시간 감지 (navigator.onLine + 이벤트)
             useEffect(() => {
-                localStorage.clear();
-                
-                // 1. HTTP 초기 데이터 1회 강제 로드
-                loadData();
-                fetchEsgReport();
-                syncWifiStatus();
-                handleWifiChange(true);
+                // 초기 연결 상태 반영
+                const isOnline = navigator.onLine;
+                setWifiConnected(isOnline);
+                if (!isOnline) setWifiDisconnectTime(Date.now());
 
-                // 2. WebSocket 실시간 스트리밍 채널 연결
-                let ws;
-                const connectWS = () => {
-                    console.log("[WebSocket] 대시보드 실시간 채널 연결 중...");
-                    ws = new WebSocket("wss://smart-multitap-api.onrender.com/ws");
-
-                    ws.onmessage = (event) => {
-                        try {
-                            const packet = json.loads ? json.loads(event.data) : JSON.parse(event.data);
-                            // 실시간 센서 업로드 이벤트 발생 시 즉시 상태 매핑
-                            if (packet.event === "sensor_upload" && packet.data) {
-                                const liveRow = packet.data;
-                                console.log("[WebSocket Live 수신]", liveRow);
-                                setApiData(prev => {
-                                    if (!prev) return [liveRow];
-                                    const filtered = prev.filter(d => !(d.device_id === liveRow.device_id && d.port_number === liveRow.port_number));
-                                    const next = [...filtered, liveRow];
-                                    updateStripsState(next);
-                                    return next;
-                                });
-                            }
-                        } catch (e) {
-                            // JSON 파싱 에러 예외
-                        }
-                    };
-
-                    ws.onclose = () => {
-                        console.log("[WebSocket] 연결이 끊김. 3초 후 재연결 시도...");
-                        setTimeout(connectWS, 3000);
-                    };
-
-                    ws.onerror = () => {
-                        ws.close();
-                    };
+                const handleOnline = () => {
+                    console.log('[Wi-Fi] 인터넷 연결됨');
+                    setWifiConnected(true);
+                    setWifiDisconnectTime(null);
+                    handleWifiChange(true, currentSSID);
+                };
+                const handleOffline = () => {
+                    console.log('[Wi-Fi] 인터넷 연결 끊김');
+                    setWifiConnected(false);
+                    setWifiDisconnectTime(Date.now());
+                    handleWifiChange(false, currentSSID);
                 };
 
-                connectWS();
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+                return () => {
+                    window.removeEventListener('online', handleOnline);
+                    window.removeEventListener('offline', handleOffline);
+                };
+            }, []);
+            // 1. 처음에 데이터 가져오고, 3초마다 반복 (API 연동 부활!)
+            // 1. 처음에 데이터 가져오고 + 🌐 와이파이 초기 상태 서버에 즉시 동기화!
+            // 1. 처음에 데이터 가져오고 + 🌐 와이파이 초기 상태 서버에 즉시 동기화!
+            useEffect(() => {
+                // 🟢 [초기화] 앱을 켜면 백엔드 서버의 모든 포트 전원을 강제로 끕니다 (Off 상태로 시작)
+                INITIAL_STRIPS_DATA.forEach(strip => {
+                    strip.ports.forEach(port => {
+                        fetch('https://smart-multitap-api.onrender.com/control', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ device_id: strip.device_id, port_number: port.id, is_on: false })
+                        }).catch(console.error);
+                    });
+                });
 
-                // 5초 간격 서브 폴링 (만약 웹소켓이 끊기거나 누락될 때를 위한 백업 보완책)
-                const backupTimer = setInterval(() => {
+                // 초기화할 시간을 0.5초 준 뒤, 데이터를 불러오기 시작합니다.
+                setTimeout(() => {
                     loadData();
-                    syncWifiStatus();
-                }, 5000);
+                    fetchEsgReport();
+                    handleWifiChange(navigator.onLine, currentSSID);
+                }, 500);
+
+                // 3초마다 센서 데이터 폴링을 10초로 연장하고, 주력은 실시간 웹소켓 연동
+                const timer = setInterval(loadData, 10000);
+                
+                let ws;
+                const connectWebSocket = () => {
+                    ws = new WebSocket("wss://smart-multitap-api.onrender.com/ws");
+                    ws.onopen = () => console.log("[WS] 실시간 서버 연결 성공!");
+                    ws.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            if (message.event === "sensor_upload" || message.event === "broadcast") {
+                                const sensor = message.data;
+                                setStrips(prev => prev.map(strip => ({
+                                    ...strip,
+                                    ports: strip.ports.map(port => {
+                                        if (strip.device_id === sensor.device_id && port.id === sensor.port_number) {
+                                            const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
+                                            const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
+                                            const isOn = isLocked ? (port.status === 'On') : serverIsOn;
+
+                                            let newContinuous = port.continuousUsage || 0;
+                                            if (!isOn || (isOn && port.status === 'Off')) newContinuous = 0;
+
+                                            return {
+                                                ...port,
+                                                voltage: `${sensor.voltage} V`,
+                                                current: `${sensor.current} A`,
+                                                power: `${sensor.power} W`,
+                                                temperature: `${sensor.temperature} °C`,
+                                                status: isOn ? "On" : "Off",
+                                                continuousUsage: newContinuous
+                                            };
+                                        }
+                                        return port;
+                                    })
+                                })));
+                            }
+                        } catch(e) {}
+                    };
+                    ws.onclose = () => {
+                        setTimeout(connectWebSocket, 3000);
+                    };
+                };
+                connectWebSocket();
 
                 return () => {
-                    clearInterval(backupTimer);
+                    clearInterval(timer);
                     if (ws) ws.close();
                 };
             }, []);
@@ -3121,8 +3204,65 @@
                 return () => clearInterval(usageTimer);
             }, []);
 
-            // 3️⃣ ⏰ 스케줄 감시용 타이머 비활성화 (버그로 인한 자동 켜짐 차단)
-            // 제거 완료
+            // 3️⃣ ⏰ 스케줄 감시용 타이머 (5초마다 빠릿하게 시계 확인!)
+            useEffect(() => {
+                const scheduleTimer = setInterval(() => {
+                    const now = new Date();
+                    const currentMins = now.getHours() * 60 + now.getMinutes();
+
+                    setStrips(prev => prev.map(strip => ({
+                        ...strip,
+                        ports: strip.ports.map(port => {
+                            let targetStatus = port.status;
+
+                            if (port.schedule?.active && port.type !== 'Always-on') {
+                                const getMins = (h, m, pm) => {
+                                    let hr = parseInt(h || '0', 10);
+                                    if (pm === 'PM' && hr !== 12) hr += 12;
+                                    if (pm === 'AM' && hr === 12) hr = 0;
+                                    return hr * 60 + parseInt(m || '0', 10);
+                                };
+
+                                const sMins = getMins(port.schedule.startH, port.schedule.startM, port.schedule.startPM);
+                                const eMins = getMins(port.schedule.endH, port.schedule.endM, port.schedule.endPM);
+
+                                let shouldBeOn = false;
+                                if (sMins <= eMins) {
+                                    shouldBeOn = currentMins >= sMins && currentMins < eMins;
+                                } else {
+                                    shouldBeOn = currentMins >= sMins || currentMins < eMins;
+                                }
+
+                                const newTargetStatus = shouldBeOn ? 'On' : 'Off';
+
+                                // 상태가 변해야 할 때만 백엔드에 즉각 신호 전송!
+                                // 상태가 변해야 할 때만 백엔드에 즉각 신호 전송!
+                                // 상태가 변해야 할 때만 백엔드에 즉각 신호 전송!
+                                if (port.status !== newTargetStatus) {
+                                    targetStatus = newTargetStatus;
+                                    console.log(`[자동 스케줄 작동] ${port.name}의 전원을 ${newTargetStatus}(으)로 변경!`);
+                                    
+                                    fetch('https://smart-multitap-api.onrender.com/control', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ 
+                                            device_id: strip.device_id, // 💡 [수정] 멀티탭 ID 추가!
+                                            port_number: port.id, 
+                                            is_on: shouldBeOn 
+                                        })
+                                    })
+                                    .then(() => console.log(`[자동 스케줄] 포트 ${port.id} 서버 전송 완료!`))
+                                    .catch(err => console.error(`[자동 스케줄] 에러 발생:`, err));
+                                }
+
+                            }
+                            return { ...port, status: targetStatus };
+                        })
+                    })));
+                }, 5000); // 💡 핵심: 5초(5000ms)마다 시계를 확인해서 오차를 줄입니다!
+
+                return () => clearInterval(scheduleTimer);
+            }, []);
             // 🟢 [완벽 교체] 외출 후 일반기기 방치 감시 타이머 (깨끗한 공백 버전)
             useEffect(() => {
                 if (wifiConnected || !wifiDisconnectTime || showAwayAlert) return;
