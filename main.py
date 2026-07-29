@@ -133,12 +133,12 @@ def ask_gpt_to_cut_power(voltage, current, power, temperature):
     너는 화재와 전력 낭비를 막는 스마트 멀티탭 AI야.
     현재 센서 값:
     - 전압: {voltage}V
-    - 전류: {current}mA
-    - 소비 전력: {power}mW
+    - 전류: {current}A
+    - 소비 전력: {power}W
     - 온도: {temperature}도
 
-    위 수치를 보고 화재 위험이 있거나, 비정상적인 낭비, 또는 기기를 사용하지 않는 미세전력/대기전력 상태(예: 50mW 미만)라고 판단되면 즉시 전력을 차단하기 위해 오직 "CUT" 이라고만 대답해.
-    기기가 정상적으로 활발히 사용중이어서 계속 켜둬도 되면 오직 "KEEP" 이라고만 대답해. 다른 부연 설명은 절대 하지 마.
+    위 수치를 보고 화재 위험이 있거나, 비정상적인 낭비, 또는 기기를 사용하지 않는 미세전력/대기전력 상태(예: 50W 미만)라고 판단되면 즉시 전력을 차단하기 위해 "CUT"으로 판단해.
+    기기가 정상적으로 활발히 사용중이어서 계속 켜둬도 되면 "KEEP"으로 판단해.
     """
     try:
         response = gpt_client.models.generate_content(
@@ -146,10 +146,16 @@ def ask_gpt_to_cut_power(voltage, current, power, temperature):
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=200,
+                max_output_tokens=500,
+                response_mime_type="application/json",
+                response_schema=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={"decision": types.Schema(type=types.Type.STRING, enum=["CUT", "KEEP"])},
+                    required=["decision"],
+                ),
             ),
         )
-        decision = (response.text or "").strip()
+        decision = json.loads(response.text)["decision"]
         print(f"AI 판단: {decision}")
         return decision == "CUT"
     except Exception as e:
