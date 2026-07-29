@@ -274,21 +274,9 @@ async def websocket_endpoint(websocket: WebSocket):
             if data_json.get("event") == "sensor_upload":
                 payload = data_json.get("data", {})
                 
-                # [버그 수정] 프론트엔드로 즉시 쏘기 전에, 최소한 서버에서 사용자가 껐는지(state["power"]) 확인!
-                # 사용자가 껐는데 센서가 아직 True로 올려보냈을 경우 화면이 멋대로 켜지는 것을 방지합니다.
-                p_str = str(payload.get("port_number", 1))
-                if get_state()["power"].get(p_str) == False:
-                    payload["is_on"] = False
-                
-                # ⚡ [딜레이 해결] 전력 등의 실시간 데이터를 0.1초 이내에 대시보드로 즉시 전송!
-                await manager.broadcast({
-                    "event": "sensor_upload",
-                    "data": payload
-                })
-                
-                # 백엔드 연산(GPT 화재 차단 분석, DB 배치 저장)은 백그라운드 태스크로 비동기 실행
-                power_data = PowerData(**payload)
-                asyncio.create_task(async_process_sensor_data(power_data))
+                # 백그라운드 태스크에서 센서 데이터를 정제/판단한 후
+                # 최종 데이터를 프론트엔드로 브로드캐스트합니다.
+                asyncio.create_task(async_process_sensor_data(PowerData(**payload)))
                 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
@@ -301,17 +289,23 @@ async def async_process_sensor_data(data: PowerData):
     loop = asyncio.get_running_loop()
     res_dict = await loop.run_in_executor(None, process_sensor_data, data)
     
-    # AI/임계값 판단에 의해 자동으로 차단 상태로 전환된 경우 즉시 제어 패킷 전송
-    if res_dict.get("is_on") == False and get_state()["power"].get(str(data.port_number)) == False:
+    # 서버에 저장된(혹은 방금 결정된) 최종 릴레이 상태
+    final_is_on = get_state()["power"].get(str(data.port_number), False)
+    
+    # AI 판단으로 차단되었거나, 상시기기인데 꺼져있어서 켜야 하거나 등
+    # 게이트웨이(기기)로 실제 제어 명령을 내려야 하는 경우 동기화 패킷 전송
+    if res_dict.get("is_on") != data.is_on: 
         await manager.broadcast({
             "event": "control",
             "port_number": data.port_number,
-            "is_on": False
+            "is_on": final_is_on
         })
-        await manager.broadcast({
-            "event": "sensor_upload",
-            "data": res_dict
-        })
+
+    # 프론트엔드 대시보드로는 서버가 정제하고 결정한 최종 데이터를 보냄 (상태 꼬임 방지)
+    await manager.broadcast({
+        "event": "sensor_upload",
+        "data": res_dict
+    })
 
 # [API 3] 센서 데이터 수신 처리 (실시간 표출 + DB 버퍼링)
 def process_sensor_data(data: PowerData):
