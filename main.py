@@ -162,7 +162,7 @@ def get_data():
     # 1. DB에서 기존 최신 로그 가져오기
     if supabase:
         try:
-            response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(20).execute()
+            response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(30).execute()
             if response.data:
                 for row in response.data:
                     p = row.get("port_number", 1)
@@ -174,6 +174,17 @@ def get_data():
     # 2. 실시간 메모리 캐시 데이터가 있으면 최신 실시간 수치로 덮어쓰기 (즉시 표출)
     for p, live_row in latest_live_cache.items():
         latest_data[p] = dict(live_row)
+
+    # 3. 데이터베이스에서 포트 1의 가장 최신 센서 값을 명시적으로 강제 쿼리 (안전장치)
+    if supabase:
+        try:
+            p1_res = supabase.table("sensor_data").select("*").eq("device_id", "smart_multitap_1").eq("port_number", 1).order("created_at", desc=True).limit(1).execute()
+            if p1_res.data:
+                db_p1 = p1_res.data[0]
+                # DB 수치가 캐시보다 최신이거나 캐시에 없으면 주입
+                latest_data[1] = db_p1
+        except Exception as e:
+            print("포트 1 DB 쿼리 에러:", e)
 
     # 기본값 보장 (포트 1 ~ 4)
     for p_num in range(1, 5):
