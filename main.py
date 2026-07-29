@@ -319,8 +319,6 @@ def process_sensor_data(data: PowerData):
     state = get_state()
     p_str = str(data.port_number)
     port_type = state["types"].get(p_str, "일반")
-    just_turned_on = (time.time() - state["last_toggle_time"].get(p_str, 0)) < 20 
-
     if port_type == "상시":
         data.is_on = True
         state["power"][p_str] = True 
@@ -328,26 +326,26 @@ def process_sensor_data(data: PowerData):
     elif state["power"].get(p_str) == False:
         data.is_on = False
         data.action_reason = "차단 상태"
-    elif just_turned_on:
-        data.is_on = True
-        data.action_reason = "기기 부팅 중 (20초 유예)"
-    elif data.power <= 30.0:
-        data.is_on = False
-        data.action_reason = "대기전력 차단 (30W 이하)"
-        state["power"][p_str] = False
     else:
         if data.temperature >= 80.0:
             data.is_on = False
             data.action_reason = "과열 차단 (80도 초과)"
             state["power"][p_str] = False
         else:
-            is_danger = ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature)
-            if is_danger:
-                data.is_on = False
-                data.action_reason = "AI 판단: 위험 및 낭비 감지 차단"
-                state["power"][p_str] = False
-            else:
-                data.action_reason = "정상 작동"
+            # 실시간 전력 표출 딜레이를 최소화하기 위해 GPT 판단 빈도를 조절하거나,
+            # 현재 릴레이 On 상태면 우선 무조건 정상으로 표시
+            data.action_reason = "정상 작동"
+            
+            # (GPT 판단은 딜레이가 심하므로, 50W 이상이거나 온도가 60도 이상일 때만 10초에 한 번 선별적 호출로 최적화)
+            if data.power > 50.0 or data.temperature > 60.0:
+                last_gpt = state.get("last_gpt_time", {}).get(p_str, 0)
+                if time.time() - last_gpt > 10:
+                    state.setdefault("last_gpt_time", {})[p_str] = time.time()
+                    is_danger = ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature)
+                    if is_danger:
+                        data.is_on = False
+                        data.action_reason = "AI 판단: 위험 및 낭비 감지 차단"
+                        state["power"][p_str] = False
             
     save_state(state)
 
