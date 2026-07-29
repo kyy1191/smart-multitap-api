@@ -641,17 +641,22 @@
             </button>
         );
 
+        // 🔌 물리 스위치가 릴레이와 별도로 ESP32에 물려있어서, 서버가 기억하는 on/off 플래그가
+        // 실제 배선 상태와 어긋날 수 있음. 그래서 화면 표시는 실측 전력을 기준으로 판단한다:
+        // 이 값(W)보다 높으면 켜짐, 이하면(대기전력만 흐르는 상태로 보고) 꺼짐으로 표시.
+        const POWER_ON_THRESHOLD_W = 0.05; // 50mW
+
         const INITIAL_STRIPS_DATA = [
-            { 
-                id: 'strip-1', 
+            {
+                id: 'strip-1',
                 device_id: "smart_multitap_1",
-                name: '멀티탭 1', 
-                room: '거실', 
+                name: '멀티탭 1',
+                room: '거실',
                 ports: [
-                    { id: 1, device_id:"multitap_port1_1", name: 'TV', room: '거실', status: 'Off', type: 'Always-on', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 2, device_id:"multitap_port1_2", name: '공기청정기', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 3, device_id:"multitap_port1_3", name: '조명 스탠드', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
-                ] 
+                    { id: 1, device_id:"multitap_port1_1", name: 'TV', room: '거실', status: 'Off', type: 'Always-on', voltage: '0 V', current: '0 A', power: '0 W', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                    { id: 2, device_id:"multitap_port1_2", name: '공기청정기', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                    { id: 3, device_id:"multitap_port1_3", name: '조명 스탠드', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
+                ]
             }
         ];
 
@@ -1816,14 +1821,21 @@
                                         <div className="px-6 pb-6 pt-2 space-y-6">
                                             
                                             {/* ⚡ 전력 및 온도 표시 박스 */}
-                                            <div className="grid grid-cols-2 gap-3 mb-6">
+                                            <div className="grid grid-cols-3 gap-3 mb-6">
                                                 <div className="bg-green-50 rounded-2xl p-4 border border-green-100">
                                                     <p className="text-[9px] font-bold text-green-600 uppercase mb-1 flex items-center gap-1">
                                                         <Icons.Zap size={8} /> {t('power')}
                                                     </p>
                                                     <p className="text-lg font-bold text-green-700">{port.power}</p>
                                                 </div>
-                                                
+
+                                                <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
+                                                    <p className="text-[9px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1">
+                                                        <Icons.Zap size={8} /> 대기전력
+                                                    </p>
+                                                    <p className="text-lg font-bold text-gray-700">{port.standbyPower || '0 mW'}</p>
+                                                </div>
+
                                                 {(() => {
                                                     const tempValue = parseFloat(port.temperature) || 0;
                                                     let theme = { box: 'bg-green-50 border-green-100', title: 'text-green-600', val: 'text-green-700', badge: 'bg-green-100 text-green-700 border-green-200', dot: 'bg-green-500', text: '안전' };
@@ -3047,11 +3059,13 @@
                                 // 🟢 [해결 1] 하드웨어가 켜질 시간을 벌어주기 위해 방패를 1.5초(1500ms)로 넉넉하게 늘립니다.
                                 const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
 
-                                // 🟢 [해결 2] 서버에 기록된 진짜 스위치 상태
-                                const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
+                                // 🔌 물리 스위치가 릴레이와 별개로 붙어있어 서버의 on/off 플래그가 실배선과 어긋날 수 있으므로,
+                                // 실측 전력이 임계값을 넘는지로 켜짐/꺼짐을 판단한다 (대기전력만 흐르면 꺼짐으로 표시).
+                                const powerVal = parseFloat(sensor.power) || 0;
+                                const isOnByPower = powerVal > POWER_ON_THRESHOLD_W;
 
-                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 서버 상태를 따름!
-                                const isOn = isLocked ? (port.status === 'On') : serverIsOn;
+                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 실측 전력 기준을 따름!
+                                const isOn = isLocked ? (port.status === 'On') : isOnByPower;
 
                                 let newContinuous = port.continuousUsage || 0;
                                 if (!isOn || (isOn && port.status === 'Off')) {
@@ -3061,12 +3075,13 @@
                                 return {
                                     ...port,
                                     // 🟢 [해결 4] 스위치가 잠겨있더라도, 전력과 온도 데이터는 서버에서 오는 즉시 화면에 바로 꽂아줍니다!
-                                    voltage: `${sensor.voltage} V`,
-                                    current: `${sensor.current} A`,
-                                    power: `${sensor.power} W`,
+                                    voltage: isOn ? `${sensor.voltage} V` : '0 V',
+                                    current: isOn ? `${sensor.current} A` : '0 A',
+                                    power: isOn ? `${sensor.power} W` : '0 W',
+                                    standbyPower: !isOn ? `${Math.round(powerVal * 1000)} mW` : '0 mW',
                                     temperature: `${sensor.temperature} °C`,
                                     status: isOn ? "On" : "Off",
-                                    continuousUsage: newContinuous 
+                                    continuousUsage: newContinuous
                                 };
                             })
                         })));
@@ -3136,17 +3151,19 @@
                                     ports: strip.ports.map(port => {
                                         if (strip.device_id === sensor.device_id && port.id === sensor.port_number) {
                                             const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
-                                            const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
-                                            const isOn = isLocked ? (port.status === 'On') : serverIsOn;
+                                            const powerVal = parseFloat(sensor.power) || 0;
+                                            const isOnByPower = powerVal > POWER_ON_THRESHOLD_W;
+                                            const isOn = isLocked ? (port.status === 'On') : isOnByPower;
 
                                             let newContinuous = port.continuousUsage || 0;
                                             if (!isOn || (isOn && port.status === 'Off')) newContinuous = 0;
 
                                             return {
                                                 ...port,
-                                                voltage: `${sensor.voltage} V`,
-                                                current: `${sensor.current} A`,
-                                                power: `${sensor.power} W`,
+                                                voltage: isOn ? `${sensor.voltage} V` : '0 V',
+                                                current: isOn ? `${sensor.current} A` : '0 A',
+                                                power: isOn ? `${sensor.power} W` : '0 W',
+                                                standbyPower: !isOn ? `${Math.round(powerVal * 1000)} mW` : '0 mW',
                                                 temperature: `${sensor.temperature} °C`,
                                                 status: isOn ? "On" : "Off",
                                                 continuousUsage: newContinuous
