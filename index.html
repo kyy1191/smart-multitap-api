@@ -644,7 +644,7 @@
         const INITIAL_STRIPS_DATA = [
             { 
                 id: 'strip-1', 
-                device_id: "multitap1",
+                device_id: "smart_multitap_1",
                 name: '멀티탭 1', 
                 room: '거실', 
                 ports: [
@@ -3112,17 +3112,6 @@
             // 1. 처음에 데이터 가져오고 + 🌐 와이파이 초기 상태 서버에 즉시 동기화!
             // 1. 처음에 데이터 가져오고 + 🌐 와이파이 초기 상태 서버에 즉시 동기화!
             useEffect(() => {
-                // 🟢 [초기화] 앱을 켜면 백엔드 서버의 모든 포트 전원을 강제로 끕니다 (Off 상태로 시작)
-                INITIAL_STRIPS_DATA.forEach(strip => {
-                    strip.ports.forEach(port => {
-                        fetch('https://smart-multitap-api.onrender.com/control', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ device_id: strip.device_id, port_number: port.id, is_on: false })
-                        }).catch(console.error);
-                    });
-                });
-
                 // 초기화할 시간을 0.5초 준 뒤, 데이터를 불러오기 시작합니다.
                 setTimeout(() => {
                     loadData();
