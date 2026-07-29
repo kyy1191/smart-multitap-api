@@ -273,19 +273,40 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if data_json.get("event") == "sensor_upload":
                 payload = data_json.get("data", {})
-                power_data = PowerData(**payload)
-                process_sensor_data(power_data)
                 
-                # 센서 처리 완료 후 대시보드 프론트엔드로 브로드캐스트 전송
+                # ⚡ [딜레이 해결] 전력 등의 실시간 데이터를 0.1초 이내에 대시보드로 즉시 전송!
+                # GPT나 DB 작업 전에 브로드캐스트를 먼저 쏨으로써 5초 지연을 원천 차단합니다.
                 await manager.broadcast({
                     "event": "sensor_upload",
-                    "data": latest_live_cache[power_data.port_number]
+                    "data": payload
                 })
+                
+                # 백엔드 연산(GPT 화재 차단 분석, DB 배치 저장)은 백그라운드 태스크로 비동기 실행
+                power_data = PowerData(**payload)
+                asyncio.create_task(async_process_sensor_data(power_data))
+                
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print("[WebSocket] 연결 해제됨.")
     except Exception as e:
         manager.disconnect(websocket)
+
+# [비동기 센서 데이터 처리 백그라운드 태스크]
+async def async_process_sensor_data(data: PowerData):
+    loop = asyncio.get_running_loop()
+    res_dict = await loop.run_in_executor(None, process_sensor_data, data)
+    
+    # AI/임계값 판단에 의해 자동으로 차단 상태로 전환된 경우 즉시 제어 패킷 전송
+    if res_dict.get("is_on") == False and get_state()["power"].get(str(data.port_number)) == False:
+        await manager.broadcast({
+            "event": "control",
+            "port_number": data.port_number,
+            "is_on": False
+        })
+        await manager.broadcast({
+            "event": "sensor_upload",
+            "data": res_dict
+        })
 
 # [API 3] 센서 데이터 수신 처리 (실시간 표출 + DB 버퍼링)
 def process_sensor_data(data: PowerData):
