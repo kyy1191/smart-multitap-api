@@ -7,7 +7,8 @@ import json
 import time
 import asyncio
 from typing import List, Optional
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 app = FastAPI()
 
@@ -42,8 +43,10 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # Supabase 클라이언트 설정
+# SUPABASE_SERVICE_KEY(secret key, RLS 우회)가 있으면 그걸 우선 사용하고,
+# 없으면 기존 SUPABASE_KEY(publishable key)로 폴백 (하위 호환)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY", "")
 supabase: Optional[Client] = None
 
 if SUPABASE_URL and SUPABASE_KEY:
@@ -52,9 +55,10 @@ if SUPABASE_URL and SUPABASE_KEY:
     except Exception as e:
         print("Supabase 연결 실패:", e)
 
-# OpenAI 클라이언트 설정
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-gpt_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+# Gemini 클라이언트 설정
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+gpt_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+GEMINI_MODEL = "gemini-flash-latest"
 
 STATE_FILE = "/tmp/smart_state.json"
 
@@ -137,17 +141,19 @@ def ask_gpt_to_cut_power(voltage, current, power, temperature):
     기기가 정상적으로 활발히 사용중이어서 계속 켜둬도 되면 오직 "KEEP" 이라고만 대답해. 다른 부연 설명은 절대 하지 마.
     """
     try:
-        response = gpt_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,
-            temperature=0.1
+        response = gpt_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=200,
+            ),
         )
-        decision = response.choices[0].message.content.strip()
-        print(f"GPT 판단: {decision}")
+        decision = (response.text or "").strip()
+        print(f"AI 판단: {decision}")
         return decision == "CUT"
     except Exception as e:
-        print("GPT 통신 에러:", e)
+        print("Gemini 통신 에러:", e)
         return False
 
 # [Supabase DB 배치 플러시 함수]

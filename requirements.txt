@@ -2,5 +2,5 @@ fastapi
 uvicorn
 supabase
 pydantic
-openai
+google-genai
 websockets
