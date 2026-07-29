@@ -82,7 +82,8 @@ def get_state():
             "power": {"1": True, "2": True, "3": True, "4": True},
             "wifi": True,
             "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
-            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0}
+            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0},
+            "db_upload_enabled": True
         }
         global_state = initial
         save_state(initial)
@@ -96,7 +97,8 @@ def get_state():
             "power": {"1": True, "2": True, "3": True, "4": True},
             "wifi": True,
             "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
-            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0}
+            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0},
+            "db_upload_enabled": True
         }
         return global_state
 
@@ -271,6 +273,21 @@ def clear_db():
         print("DB 초기화 에러:", e)
         return {"status": "error", "message": str(e)}
 
+# [API 2.3] DB 전송 ON/OFF 제어 (로컬 컨트롤 패널용 - 테스트 중 Supabase에 데이터 안 쌓게)
+class DbUploadToggle(BaseModel):
+    enabled: bool
+
+@app.get("/db-upload-status")
+def get_db_upload_status():
+    return {"enabled": get_state().get("db_upload_enabled", True)}
+
+@app.post("/toggle-db-upload")
+def toggle_db_upload(req: DbUploadToggle):
+    state = get_state()
+    state["db_upload_enabled"] = req.enabled
+    save_state(state)
+    return {"message": "설정 완료", "enabled": req.enabled}
+
 # [API 2.5] 라즈베리파이/PC 게이트웨이 전용 실시간 웹소켓 엔드포인트
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -357,12 +374,13 @@ def process_sensor_data(data: PowerData):
     # ⚡ 1. 실시간 표출용 메모리 캐시에 즉시 업데이트 (대시보드는 항상 최신 실시간 수치 표시)
     latest_live_cache[data.port_number] = data_dict
 
-    # 📦 2. Supabase DB 저장을 위해 버퍼에 누적
-    db_buffer.append(data_dict)
+    # 📦 2. Supabase DB 저장을 위해 버퍼에 누적 (로컬 컨트롤 패널에서 꺼놨으면 통째로 건너뜀 - 테스트 중 DB에 안 쌓이게)
+    if state.get("db_upload_enabled", True):
+        db_buffer.append(data_dict)
 
-    # 3. 버퍼 개수가 모였거나 일정 시간이 지나면 DB에 모아서 저장 (배치 인서트)
-    if len(db_buffer) >= MAX_BUFFER_SIZE or (time.time() - last_flush_time) >= FLUSH_INTERVAL:
-        flush_db_buffer()
+        # 3. 버퍼 개수가 모였거나 일정 시간이 지나면 DB에 모아서 저장 (배치 인서트)
+        if len(db_buffer) >= MAX_BUFFER_SIZE or (time.time() - last_flush_time) >= FLUSH_INTERVAL:
+            flush_db_buffer()
 
     return data_dict
 
