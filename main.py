@@ -274,8 +274,13 @@ async def websocket_endpoint(websocket: WebSocket):
             if data_json.get("event") == "sensor_upload":
                 payload = data_json.get("data", {})
                 
+                # [버그 수정] 프론트엔드로 즉시 쏘기 전에, 최소한 서버에서 사용자가 껐는지(state["power"]) 확인!
+                # 사용자가 껐는데 센서가 아직 True로 올려보냈을 경우 화면이 멋대로 켜지는 것을 방지합니다.
+                p_str = str(payload.get("port_number", 1))
+                if get_state()["power"].get(p_str) == False:
+                    payload["is_on"] = False
+                
                 # ⚡ [딜레이 해결] 전력 등의 실시간 데이터를 0.1초 이내에 대시보드로 즉시 전송!
-                # GPT나 DB 작업 전에 브로드캐스트를 먼저 쏨으로써 5초 지연을 원천 차단합니다.
                 await manager.broadcast({
                     "event": "sensor_upload",
                     "data": payload
@@ -314,7 +319,7 @@ def process_sensor_data(data: PowerData):
     state = get_state()
     p_str = str(data.port_number)
     port_type = state["types"].get(p_str, "일반")
-    just_turned_on = (time.time() - state["last_toggle_time"].get(p_str, 0)) < 5 
+    just_turned_on = (time.time() - state["last_toggle_time"].get(p_str, 0)) < 20 
 
     if port_type == "상시":
         data.is_on = True
@@ -325,10 +330,10 @@ def process_sensor_data(data: PowerData):
         data.action_reason = "차단 상태"
     elif just_turned_on:
         data.is_on = True
-        data.action_reason = "기기 부팅 중 (5초 유예)"
+        data.action_reason = "기기 부팅 중 (20초 유예)"
     elif data.power <= 30.0:
         data.is_on = False
-        data.action_reason = "대기전력 차단 (30mW 이하)"
+        data.action_reason = "대기전력 차단 (30W 이하)"
         state["power"][p_str] = False
     else:
         if data.temperature >= 80.0:
