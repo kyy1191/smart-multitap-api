@@ -642,9 +642,10 @@
         );
 
         // 🔌 물리 스위치가 릴레이와 별도로 ESP32에 물려있어서, 서버가 기억하는 on/off 플래그가
-        // 실제 배선 상태와 어긋날 수 있음. 그래서 화면 표시는 실측 전력을 기준으로 판단한다:
-        // 이 값(W)보다 높으면 켜짐, 이하면(대기전력만 흐르는 상태로 보고) 꺼짐으로 표시.
-        const POWER_ON_THRESHOLD_W = 0.05; // 50mW
+        // 실제 배선 상태와 어긋날 수 있음. 그래서 화면 표시는 실측 전력을 기준으로 판단한다.
+        // ⚠️ 실측 INA219 값은 W가 아니라 mW 단위로 옴 (예: 5.19V × 2.9mA ≈ 16mW) — power 필드 숫자를 그대로 mW로 취급한다.
+        // 이 값(mW)보다 높으면 켜짐, 이하면(대기전력만 흐르는 상태로 보고) 꺼짐으로 표시.
+        const POWER_ON_THRESHOLD_MW = 50; // 50mW
 
         const INITIAL_STRIPS_DATA = [
             {
@@ -653,9 +654,9 @@
                 name: '멀티탭 1',
                 room: '거실',
                 ports: [
-                    { id: 1, device_id:"multitap_port1_1", name: 'TV', room: '거실', status: 'Off', type: 'Always-on', voltage: '0 V', current: '0 A', power: '0 W', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 2, device_id:"multitap_port1_2", name: '공기청정기', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 3, device_id:"multitap_port1_3", name: '조명 스탠드', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
+                    { id: 1, device_id:"multitap_port1_1", name: 'TV', room: '거실', status: 'Off', type: 'Always-on', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                    { id: 2, device_id:"multitap_port1_2", name: '공기청정기', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                    { id: 3, device_id:"multitap_port1_3", name: '조명 스탠드', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
                 ]
             }
         ];
@@ -1522,9 +1523,9 @@
                 name: `멀티탭 ${strips.length + 1}`,
                 room: activeRoom,
                 ports: [
-                    { id: 1, device_id: `port_${Date.now()}_1`, name: '새 기기 1', room: activeRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 2, device_id: `port_${Date.now()}_2`, name: '새 기기 2', room: activeRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 3, device_id: `port_${Date.now()}_3`, name: '새 기기 3', room: activeRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
+                    { id: 1, device_id: `port_${Date.now()}_1`, name: '새 기기 1', room: activeRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                    { id: 2, device_id: `port_${Date.now()}_2`, name: '새 기기 2', room: activeRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                    { id: 3, device_id: `port_${Date.now()}_3`, name: '새 기기 3', room: activeRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
                 ]
             };
             
@@ -1583,9 +1584,9 @@
                         name: '멀티탭 1',
                         room: trimmedRoom,
                         ports: [
-                            { id: 1, device_id: `port_${Date.now()}_1`, name: '새 기기 1', room: trimmedRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                            { id: 2, device_id: `port_${Date.now()}_2`, name: '새 기기 2', room: trimmedRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                            { id: 3, device_id: `port_${Date.now()}_3`, name: '새 기기 3', room: trimmedRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 A', power: '0 W', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
+                            { id: 1, device_id: `port_${Date.now()}_1`, name: '새 기기 1', room: trimmedRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                            { id: 2, device_id: `port_${Date.now()}_2`, name: '새 기기 2', room: trimmedRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
+                            { id: 3, device_id: `port_${Date.now()}_3`, name: '새 기기 3', room: trimmedRoom, status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
                         ]
                     };
 
@@ -1702,7 +1703,7 @@
                         <div className="flex items-center gap-4 text-sm font-medium text-gray-600">
                             <div className="flex items-center gap-1.5"><div className="w-2 h-2 bg-green-500 rounded-full" /><span>{activeCount} {t('active')}</span></div>
                             <div className="w-px h-4 bg-gray-300" />
-                            <span>{totalPower.toFixed(1)} W {t('totalPower')}</span>
+                            <span>{totalPower.toFixed(1)} mW {t('totalPower')}</span>
                         </div>
                     </div>
                 <div className="space-y-4">
@@ -3061,8 +3062,9 @@
 
                                 // 🔌 물리 스위치가 릴레이와 별개로 붙어있어 서버의 on/off 플래그가 실배선과 어긋날 수 있으므로,
                                 // 실측 전력이 임계값을 넘는지로 켜짐/꺼짐을 판단한다 (대기전력만 흐르면 꺼짐으로 표시).
+                                // ⚠️ sensor.power는 이미 mW 단위 숫자이므로 그대로 비교/표시한다 (W로 착각해 ×1000/÷1000 하지 말 것).
                                 const powerVal = parseFloat(sensor.power) || 0;
-                                const isOnByPower = powerVal > POWER_ON_THRESHOLD_W;
+                                const isOnByPower = powerVal > POWER_ON_THRESHOLD_MW;
 
                                 // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 실측 전력 기준을 따름!
                                 const isOn = isLocked ? (port.status === 'On') : isOnByPower;
@@ -3076,9 +3078,9 @@
                                     ...port,
                                     // 🟢 [해결 4] 스위치가 잠겨있더라도, 전력과 온도 데이터는 서버에서 오는 즉시 화면에 바로 꽂아줍니다!
                                     voltage: isOn ? `${sensor.voltage} V` : '0 V',
-                                    current: isOn ? `${sensor.current} A` : '0 A',
-                                    power: isOn ? `${sensor.power} W` : '0 W',
-                                    standbyPower: !isOn ? `${Math.round(powerVal * 1000)} mW` : '0 mW',
+                                    current: isOn ? `${sensor.current} mA` : '0 mA',
+                                    power: isOn ? `${sensor.power} mW` : '0 mW',
+                                    standbyPower: !isOn ? `${Math.round(powerVal)} mW` : '0 mW',
                                     temperature: `${sensor.temperature} °C`,
                                     status: isOn ? "On" : "Off",
                                     continuousUsage: newContinuous
@@ -3152,7 +3154,7 @@
                                         if (strip.device_id === sensor.device_id && port.id === sensor.port_number) {
                                             const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
                                             const powerVal = parseFloat(sensor.power) || 0;
-                                            const isOnByPower = powerVal > POWER_ON_THRESHOLD_W;
+                                            const isOnByPower = powerVal > POWER_ON_THRESHOLD_MW;
                                             const isOn = isLocked ? (port.status === 'On') : isOnByPower;
 
                                             let newContinuous = port.continuousUsage || 0;
@@ -3161,9 +3163,9 @@
                                             return {
                                                 ...port,
                                                 voltage: isOn ? `${sensor.voltage} V` : '0 V',
-                                                current: isOn ? `${sensor.current} A` : '0 A',
-                                                power: isOn ? `${sensor.power} W` : '0 W',
-                                                standbyPower: !isOn ? `${Math.round(powerVal * 1000)} mW` : '0 mW',
+                                                current: isOn ? `${sensor.current} mA` : '0 mA',
+                                                power: isOn ? `${sensor.power} mW` : '0 mW',
+                                                standbyPower: !isOn ? `${Math.round(powerVal)} mW` : '0 mW',
                                                 temperature: `${sensor.temperature} °C`,
                                                 status: isOn ? "On" : "Off",
                                                 continuousUsage: newContinuous
