@@ -198,14 +198,13 @@ def get_data():
     for p, live_row in latest_live_cache.items():
         latest_data[p] = dict(live_row)
 
-    # 3. 데이터베이스에서 포트 1의 가장 최신 센서 값을 명시적으로 강제 쿼리 (안전장치)
-    if supabase:
+    # 3. 포트 1이 캐시에도 DB에도 없을 때만(콜드 스타트 등) 안전장치로 DB에서 강제 조회.
+    #    캐시가 있으면 그게 항상 더 최신이므로(DB는 최대 FLUSH_INTERVAL초 배치 저장) 덮어쓰지 않음.
+    if supabase and 1 not in latest_data:
         try:
             p1_res = supabase.table("sensor_data").select("*").eq("device_id", "smart_multitap_1").eq("port_number", 1).order("created_at", desc=True).limit(1).execute()
             if p1_res.data:
-                db_p1 = p1_res.data[0]
-                # DB 수치가 캐시보다 최신이거나 캐시에 없으면 주입
-                latest_data[1] = db_p1
+                latest_data[1] = p1_res.data[0]
         except Exception as e:
             print("포트 1 DB 쿼리 에러:", e)
 
@@ -325,13 +324,12 @@ def process_sensor_data(data: PowerData):
     state = get_state()
     p_str = str(data.port_number)
     port_type = state["types"].get(p_str, "일반")
-    if port_type == "상시":
-        data.is_on = True
-        state["power"][p_str] = True 
-        data.action_reason = "상시기기 (항시 작동)"
-    elif state["power"].get(p_str) == False:
+    if state["power"].get(p_str) == False:
         data.is_on = False
         data.action_reason = "차단 상태"
+    elif port_type == "상시":
+        data.is_on = True
+        data.action_reason = "상시기기 (항시 작동)"
     else:
         if data.temperature >= 80.0:
             data.is_on = False
