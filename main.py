@@ -65,8 +65,14 @@ last_flush_time = time.time()
 FLUSH_INTERVAL = 10      # 10초 주기 DB 저장
 MAX_BUFFER_SIZE = 10     # 10개 누적 시 저장
 
-# [장부 시스템]
+# [장부 시스템] 전역 상태 변수로 관리하여 I/O 경합 완전 차단
+global_state = None
+
 def get_state():
+    global global_state
+    if global_state is not None:
+        return global_state
+
     if not os.path.exists(STATE_FILE):
         initial = {
             "power": {"1": True, "2": True, "3": True, "4": True},
@@ -74,20 +80,25 @@ def get_state():
             "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
             "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0}
         }
+        global_state = initial
         save_state(initial)
         return initial
     try:
         with open(STATE_FILE, "r") as f:
-            return json.load(f)
+            global_state = json.load(f)
+            return global_state
     except:
-        return {
+        global_state = {
             "power": {"1": True, "2": True, "3": True, "4": True},
             "wifi": True,
             "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
             "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0}
         }
+        return global_state
 
 def save_state(state):
+    global global_state
+    global_state = state
     try:
         with open(STATE_FILE, "w") as f:
             json.dump(state, f)
@@ -228,13 +239,13 @@ async def control_port(req: ControlData):
     if req.port_number in latest_live_cache:
         latest_live_cache[req.port_number]["is_on"] = req.is_on
 
-    # 웹소켓 브로드캐스트 (게이트웨이에 제어 명령 전달)
-    control_msg = {
+    # 게이트웨이에 즉각 제어 명령 전달 (웹소켓)
+    await manager.broadcast({
         "event": "control",
         "port_number": req.port_number,
         "is_on": req.is_on
-    }
-    await manager.broadcast(control_msg)
+    })
+
     return {"message": "제어 성공"}
 
 # [API 2.2] Supabase DB 센서 데이터 전체 초기화
@@ -254,7 +265,7 @@ def clear_db():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    print("[WebSocket] 게이트웨이 연결됨!")
+    print("[WebSocket] 새로운 클라이언트 연결됨!")
     try:
         while True:
             data_text = await websocket.receive_text()
@@ -264,10 +275,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 payload = data_json.get("data", {})
                 power_data = PowerData(**payload)
                 process_sensor_data(power_data)
-                await websocket.send_json({"status": "ok", "port": power_data.port_number})
+                
+                # 센서 처리 완료 후 대시보드 프론트엔드로 브로드캐스트 전송
+                await manager.broadcast({
+                    "event": "sensor_upload",
+                    "data": latest_live_cache[power_data.port_number]
+                })
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-        print("[WebSocket] 게이트웨이 연결 해제됨.")
+        print("[WebSocket] 연결 해제됨.")
     except Exception as e:
         manager.disconnect(websocket)
 

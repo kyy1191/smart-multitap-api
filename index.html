@@ -2965,59 +2965,60 @@
             }, []);     
             
             // 데이터 폴링 및 상태 업데이트
-            // 데이터 폴링 및 상태 업데이트
             const loadData = () => {
                 fetch("https://smart-multitap-api.onrender.com/get-data")
                     .then(res => res.json())
                     .then(data => {
-                        console.log("받아온 데이터:", data);
+                        console.log("초기 로드 데이터:", data);
                         setApiData(data);
-
-                        setStrips(prev => prev.map(strip => ({
-                            ...strip,
-                            ports: strip.ports.map(port => {
-                                const sensor = data.find(d =>
-                                    d.device_id === strip.device_id &&
-                                    d.port_number === port.id
-                                );
-
-                                if (!sensor) return port;
-
-                                // 🟢 [해결 1] 하드웨어가 켜질 시간을 벌어주기 위해 방패를 8초(8000ms)로 넉넉하게 늘립니다.
-                                const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 8000);
-
-                                // 🟢 [해결 2] 서버에 기록된 진짜 스위치 상태
-                                const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
-
-                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 서버 상태를 따름!
-                                const isOn = isLocked ? (port.status === 'On') : serverIsOn;
-
-                                let newContinuous = port.continuousUsage || 0;
-                                if (!isOn || (isOn && port.status === 'Off')) {
-                                    newContinuous = 0;
-                                }
-
-                                return {
-                                    ...port,
-                                    // 🟢 [해결 4] 스위치가 잠겨있더라도, 전력과 온도 데이터는 서버에서 오는 즉시 화면에 바로 꽂아줍니다!
-                                    voltage: isOn ? `${sensor.voltage} V` : '0 V',
-                                    current: isOn ? `${sensor.current} A` : '0 A',
-                                    power: isOn ? `${sensor.power} W` : '0 W',
-                                    temperature: `${sensor.temperature} °C`,
-                                    status: isOn ? "On" : "Off",
-                                    continuousUsage: newContinuous 
-                                };
-                            })
-                        })));
+                        updateStripsState(data);
                     })
                     .catch(console.error);
+
                 fetch("https://smart-multitap-api.onrender.com/get-stats")
                     .then(res => res.json())
                     .then(data => {
-                        console.log("실시간 통계 데이터 수신:", data);
                         setStats(data);
                     })
                     .catch(console.error);
+            };
+
+            const updateStripsState = (data) => {
+                if (!data || !Array.isArray(data)) return;
+                setStrips(prev => prev.map(strip => ({
+                    ...strip,
+                    ports: strip.ports.map(port => {
+                        const sensor = data.find(d =>
+                            d.device_id === strip.device_id &&
+                            d.port_number === port.id
+                        );
+
+                        if (!sensor) return port;
+
+                        // 🟢 사용자가 스위치를 조작한 직후 8초 동안은 방패(Lock)가 걸려 UI가 클라이언트 상태를 강제 고정
+                        const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 8000);
+                        
+                        // 🟢 백엔드 서버 상태가 켜짐(true)인지 여부만 100% 신뢰
+                        const serverIsOn = sensor.is_on === true || sensor.is_on === 'true' || sensor.is_on === 1;
+                        const isOn = isLocked ? (port.status === 'On') : serverIsOn;
+
+                        let newContinuous = port.continuousUsage || 0;
+                        if (!isOn || (isOn && port.status === 'Off')) {
+                            newContinuous = 0;
+                        }
+
+                        return {
+                            ...port,
+                            // 🟢 스위치가 켜졌을 때만 전압/전류를 표출하고, 꺼져있다면 실제 센서 노이즈가 흐르든 말든 강제로 0 처리하여 혼란 방지
+                            voltage: isOn ? `${sensor.voltage} V` : '0 V',
+                            current: isOn ? `${sensor.current} A` : '0 A',
+                            power: isOn ? `${sensor.power} W` : '0 W',
+                            temperature: `${sensor.temperature} °C`,
+                            status: isOn ? "On" : "Off",
+                            continuousUsage: newContinuous 
+                        };
+                    })
+                })));
             };
 
             // 🌐 Wi-Fi 상태 실시간 동기화 (서버에서 폴링)
@@ -3027,48 +3028,74 @@
                     .then(data => {
                         if (data && data.ssid && data.ssid !== currentSSID) {
                             setCurrentSSID(data.ssid);
-                            console.log('[Wi-Fi 동기화] SSID 업데이트:', data.ssid);
                         }
                         if (typeof data.connected === 'boolean' && data.connected !== wifiConnected) {
                             setWifiConnected(data.connected);
                             if (!data.connected) setWifiDisconnectTime(Date.now());
                             else setWifiDisconnectTime(null);
-                            console.log('[Wi-Fi 동기화] 연결 상태 업데이트:', data.connected);
                         }
                     })
-                    .catch(() => {
-                        // 서버에 GET /wifi-status 없을 경우 조용히 무시
-                    });
+                    .catch(() => {});
             };
-            // 1. 처음에 데이터 가져오고, 3초마다 반복 (API 연동 부활!)
-            // 1. 처음에 데이터 가져오고 + 🌐 와이파이 초기 상태 서버에 즉시 동기화!
-            // 1. 처음에 데이터 가져오고 + 🌐 와이파이 초기 상태 서버에 즉시 동기화!
+
+            // 🟢 [WebSocket 실시간 스트리밍 도입]
             useEffect(() => {
-                // 🟢 [초기화] 앱을 켜면 백엔드 서버의 모든 포트 전원을 강제로 끕니다 (Off 상태로 시작)
-                INITIAL_STRIPS_DATA.forEach(strip => {
-                    strip.ports.forEach(port => {
-                        fetch('https://smart-multitap-api.onrender.com/control', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ device_id: strip.device_id, port_number: port.id, is_on: false })
-                        }).catch(console.error);
-                    });
-                });
+                localStorage.clear();
+                
+                // 1. HTTP 초기 데이터 1회 강제 로드
+                loadData();
+                fetchEsgReport();
+                syncWifiStatus();
+                handleWifiChange(true);
 
-                // 초기화할 시간을 0.5초 준 뒤, 데이터를 불러오기 시작합니다.
-                setTimeout(() => {
-                    loadData();
-                    fetchEsgReport();
-                    syncWifiStatus();
-                    handleWifiChange(true); 
-                }, 500);
+                // 2. WebSocket 실시간 스트리밍 채널 연결
+                let ws;
+                const connectWS = () => {
+                    console.log("[WebSocket] 대시보드 실시간 채널 연결 중...");
+                    ws = new WebSocket("wss://smart-multitap-api.onrender.com/ws");
 
-                // 3초마다 데이터 + Wi-Fi 상태 동시 폴링
-                const timer = setInterval(() => {
+                    ws.onmessage = (event) => {
+                        try {
+                            const packet = json.loads ? json.loads(event.data) : JSON.parse(event.data);
+                            // 실시간 센서 업로드 이벤트 발생 시 즉시 상태 매핑
+                            if (packet.event === "sensor_upload" && packet.data) {
+                                const liveRow = packet.data;
+                                console.log("[WebSocket Live 수신]", liveRow);
+                                setApiData(prev => {
+                                    if (!prev) return [liveRow];
+                                    const filtered = prev.filter(d => !(d.device_id === liveRow.device_id && d.port_number === liveRow.port_number));
+                                    const next = [...filtered, liveRow];
+                                    updateStripsState(next);
+                                    return next;
+                                });
+                            }
+                        } catch (e) {
+                            // JSON 파싱 에러 예외
+                        }
+                    };
+
+                    ws.onclose = () => {
+                        console.log("[WebSocket] 연결이 끊김. 3초 후 재연결 시도...");
+                        setTimeout(connectWS, 3000);
+                    };
+
+                    ws.onerror = () => {
+                        ws.close();
+                    };
+                };
+
+                connectWS();
+
+                // 5초 간격 서브 폴링 (만약 웹소켓이 끊기거나 누락될 때를 위한 백업 보완책)
+                const backupTimer = setInterval(() => {
                     loadData();
                     syncWifiStatus();
-                }, 3000);
-                return () => clearInterval(timer);
+                }, 5000);
+
+                return () => {
+                    clearInterval(backupTimer);
+                    if (ws) ws.close();
+                };
             }, []);
 
             // 2. 1분마다 사용 시간 올려주기
@@ -3094,65 +3121,8 @@
                 return () => clearInterval(usageTimer);
             }, []);
 
-            // 3️⃣ ⏰ 스케줄 감시용 타이머 (5초마다 빠릿하게 시계 확인!)
-            useEffect(() => {
-                const scheduleTimer = setInterval(() => {
-                    const now = new Date();
-                    const currentMins = now.getHours() * 60 + now.getMinutes();
-
-                    setStrips(prev => prev.map(strip => ({
-                        ...strip,
-                        ports: strip.ports.map(port => {
-                            let targetStatus = port.status;
-
-                            if (port.schedule?.active && port.type !== 'Always-on') {
-                                const getMins = (h, m, pm) => {
-                                    let hr = parseInt(h || '0', 10);
-                                    if (pm === 'PM' && hr !== 12) hr += 12;
-                                    if (pm === 'AM' && hr === 12) hr = 0;
-                                    return hr * 60 + parseInt(m || '0', 10);
-                                };
-
-                                const sMins = getMins(port.schedule.startH, port.schedule.startM, port.schedule.startPM);
-                                const eMins = getMins(port.schedule.endH, port.schedule.endM, port.schedule.endPM);
-
-                                let shouldBeOn = false;
-                                if (sMins <= eMins) {
-                                    shouldBeOn = currentMins >= sMins && currentMins < eMins;
-                                } else {
-                                    shouldBeOn = currentMins >= sMins || currentMins < eMins;
-                                }
-
-                                const newTargetStatus = shouldBeOn ? 'On' : 'Off';
-
-                                // 상태가 변해야 할 때만 백엔드에 즉각 신호 전송!
-                                // 상태가 변해야 할 때만 백엔드에 즉각 신호 전송!
-                                // 상태가 변해야 할 때만 백엔드에 즉각 신호 전송!
-                                if (port.status !== newTargetStatus) {
-                                    targetStatus = newTargetStatus;
-                                    console.log(`[자동 스케줄 작동] ${port.name}의 전원을 ${newTargetStatus}(으)로 변경!`);
-                                    
-                                    fetch('https://smart-multitap-api.onrender.com/control', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ 
-                                            device_id: strip.device_id, // 💡 [수정] 멀티탭 ID 추가!
-                                            port_number: port.id, 
-                                            is_on: shouldBeOn 
-                                        })
-                                    })
-                                    .then(() => console.log(`[자동 스케줄] 포트 ${port.id} 서버 전송 완료!`))
-                                    .catch(err => console.error(`[자동 스케줄] 에러 발생:`, err));
-                                }
-
-                            }
-                            return { ...port, status: targetStatus };
-                        })
-                    })));
-                }, 5000); // 💡 핵심: 5초(5000ms)마다 시계를 확인해서 오차를 줄입니다!
-
-                return () => clearInterval(scheduleTimer);
-            }, []);
+            // 3️⃣ ⏰ 스케줄 감시용 타이머 비활성화 (버그로 인한 자동 켜짐 차단)
+            // 제거 완료
             // 🟢 [완벽 교체] 외출 후 일반기기 방치 감시 타이머 (깨끗한 공백 버전)
             useEffect(() => {
                 if (wifiConnected || !wifiDisconnectTime || showAwayAlert) return;
