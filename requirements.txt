@@ -3,3 +3,4 @@ uvicorn
 supabase
 pydantic
 openai
+websockets

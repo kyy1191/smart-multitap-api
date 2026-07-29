@@ -1,10 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from supabase import create_client, Client
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
 import time
+from typing import List, Optional
+from openai import OpenAI
 
 app = FastAPI()
 
@@ -16,9 +18,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# [웹소켓 커넥션 매니저]
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+manager = ConnectionManager()
+
+# Supabase 클라이언트 설정
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+supabase: Optional[Client] = None
+
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print("Supabase 연결 실패:", e)
+
+# OpenAI 클라이언트 설정
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+gpt_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 STATE_FILE = "/tmp/smart_state.json"
 
@@ -37,78 +72,142 @@ def get_state():
         with open(STATE_FILE, "r") as f:
             return json.load(f)
     except:
-        return {"power": {"1": True, "2": True, "3": True, "4": True}, "wifi": True, "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"}, "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0}}
+        return {
+            "power": {"1": True, "2": True, "3": True, "4": True},
+            "wifi": True,
+            "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
+            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0}
+        }
 
 def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except:
+        pass
 
-# [데이터 구조]
+# [데이터 구조 (ORCA Supabase 스키마 엄격 준수)]
 class PowerData(BaseModel):
-    room: str
-    device_id: str
-    port_number: int
-    voltage: float
-    current: float
-    power: float
-    temperature: float
-    is_on: bool
-    action_reason: str
+    room: Optional[str] = "거실"
+    device_id: Optional[str] = "smart_multitap_1"
+    port_number: int = 1
+    voltage: float = 0.0
+    current: float = 0.0
+    power: float = 0.0
+    temperature: float = 25.0
+    is_on: bool = True
+    action_reason: Optional[str] = "정상 작동"
 
 class ControlData(BaseModel):
     port_number: int
     is_on: bool
 
-# [API 1] 실시간 상태 가져오기
+# [AI 판단 로직]
+def ask_gpt_to_cut_power(voltage, current, power, temperature):
+    if not gpt_client:
+        return False
+    prompt = f"""
+    너는 화재와 전력 낭비를 막는 스마트 멀티탭 AI야.
+    현재 센서 값:
+    - 전압: {voltage}V
+    - 전류: {current}mA
+    - 소비 전력: {power}mW
+    - 온도: {temperature}도
+
+    위 수치를 보고, 화재 위험이 있거나 비정상적인 전력 낭비라고 판단되면 오직 "CUT" 이라고만 대답해.
+    정상적인 상황이라 계속 켜둬도 되면 오직 "KEEP" 이라고만 대답해. 다른 부연 설명은 절대 하지 마.
+    """
+    try:
+        response = gpt_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=10,
+            temperature=0.1
+        )
+        decision = response.choices[0].message.content.strip()
+        print(f"GPT 판단: {decision}")
+        return decision == "CUT"
+    except Exception as e:
+        print("GPT 통신 에러:", e)
+        return False
+
+# [API 1] 실시간 상태 가져오기 (웹 대시보드 연동)
 @app.get("/get-data")
 def get_data():
     state = get_state()
-    response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(16).execute()
-    latest_data = {}
-    for row in response.data:
-        p = row["port_number"]
-        if p not in latest_data:
-            latest_data[p] = row
-    
-    result = list(latest_data.values())
-    for row in result:
-        p_str = str(row["port_number"])
-        row["device_type"] = state["types"].get(p_str, "일반")
-        row["wifi_connected"] = state["wifi"]
+    if not supabase:
+        return []
+    try:
+        response = supabase.table("sensor_data").select("*").order("created_at", desc=True).limit(16).execute()
+        latest_data = {}
+        for row in response.data:
+            p = row.get("port_number", 1)
+            if p not in latest_data:
+                latest_data[p] = row
         
-        if not state["wifi"] and state["types"].get(p_str) == "위험":
-            state["power"][p_str] = False
-            save_state(state) 
+        result = list(latest_data.values())
+        for row in result:
+            p_str = str(row.get("port_number", 1))
+            row["device_type"] = state["types"].get(p_str, "일반")
+            row["wifi_connected"] = state.get("wifi", True)
             
-        if state["power"].get(p_str) == False:
-            row["is_on"] = False
-            row["power"] = 0.0
-            row["action_reason"] = "차단 상태"
-            
-    result.sort(key=lambda x: x["port_number"])
-    return result
+            if state["power"].get(p_str) == False:
+                row["is_on"] = False
+                row["power"] = 0.0
+                row["action_reason"] = "차단 상태"
+                
+        result.sort(key=lambda x: x.get("port_number", 1))
+        return result
+    except Exception as e:
+        print("get_data 에러:", e)
+        return []
 
 # [API 2] 수동 제어
 @app.post("/control")
-def control_port(req: ControlData):
+async def control_port(req: ControlData):
     state = get_state()
     state["power"][str(req.port_number)] = req.is_on
     if req.is_on:
         state["last_toggle_time"][str(req.port_number)] = time.time()
     save_state(state)
+    
+    # 웹소켓 브로드캐스트 (게이트웨이에 제어 명령 전달)
+    control_msg = {
+        "event": "control",
+        "port_number": req.port_number,
+        "is_on": req.is_on
+    }
+    await manager.broadcast(control_msg)
     return {"message": "제어 성공"}
 
-# [API 3] 센서 데이터 업로드 & 방어 로직 (딜레이 없음!)
+# [API 2.5] 라즈베리파이/PC 게이트웨이 전용 실시간 웹소켓 엔드포인트
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    print("[WebSocket] 게이트웨이 연결됨!")
+    try:
+        while True:
+            data_text = await websocket.receive_text()
+            data_json = json.loads(data_text)
+            
+            if data_json.get("event") == "sensor_upload":
+                payload = data_json.get("data", {})
+                power_data = PowerData(**payload)
+                upload_data(power_data)
+                await websocket.send_json({"status": "ok", "port": power_data.port_number})
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        print("[WebSocket] 게이트웨이 연결 해제됨.")
+    except Exception as e:
+        manager.disconnect(websocket)
+
+# [API 3] 센서 데이터 업로드 & Supabase DB 저장
 @app.post("/upload-data")
 def upload_data(data: PowerData):
     state = get_state()
     p_str = str(data.port_number)
-    wifi_connected = state["wifi"]
     port_type = state["types"].get(p_str, "일반")
     just_turned_on = (time.time() - state["last_toggle_time"].get(p_str, 0)) < 5 
-
-    if not wifi_connected and port_type == "위험":
-        state["power"][p_str] = False
 
     if port_type == "상시":
         data.is_on = True
@@ -124,38 +223,47 @@ def upload_data(data: PowerData):
     else:
         if data.temperature >= 80.0:
             data.is_on = False
-            data.action_reason = "과열 차단"
+            data.action_reason = "과열 차단 (80도 초과)"
             state["power"][p_str] = False
         else:
-            data.action_reason = "정상 작동"
+            is_danger = ask_gpt_to_cut_power(data.voltage, data.current, data.power, data.temperature)
+            if is_danger:
+                data.is_on = False
+                data.action_reason = "AI 판단: 위험 및 낭비 감지 차단"
+                state["power"][p_str] = False
+            else:
+                data.action_reason = "정상 작동"
             
     save_state(state)
-    supabase.table("sensor_data").insert(data.dict()).execute()
-    return {"message": "데이터 처리 성공"}
+    
+    # Supabase DB 저장
+    res_data = None
+    if supabase:
+        try:
+            res = supabase.table("sensor_data").insert(data.dict()).execute()
+            res_data = res.data
+        except Exception as e:
+            print("Supabase insert 에러:", e)
+            
+    return {"message": "데이터 처리 성공", "result": res_data}
 
-# [API 4] ⭐️ 새롭게 추가된 대시보드 통계 전용 API
+# [API 4] 대시보드 통계 API
 @app.get("/get-stats")
 def get_stats():
-    # 1. Supabase에서 기기가 꺼진(is_on=False) 최신 로그를 가져옵니다.
-    response = supabase.table("sensor_data").select("action_reason").eq("is_on", False).limit(500).execute()
-    
-    # 2. 화재 예방(자동 차단) 횟수 계산
-    # 사유에 '차단'이라는 단어가 포함된 로그의 개수를 셉니다.
     cut_count = 0
-    if response.data:
-        cut_count = len([row for row in response.data if "차단" in row.get("action_reason", "")])
+    if supabase:
+        try:
+            response = supabase.table("sensor_data").select("action_reason").eq("is_on", False).limit(500).execute()
+            if response.data:
+                cut_count = len([row for row in response.data if "차단" in row.get("action_reason", "")])
+        except Exception as e:
+            print("get_stats 에러:", e)
 
-    # 3. 전력량(kWh) 및 절약 비용(원) 계산
-    # * 1회 차단될 때마다 대략 0.4 kWh를 아꼈다고 가정 (원하시는 수식으로 변경 가능)
-    # * 1 kWh당 전기요금을 150원으로 가정
     saved_kwh_today = cut_count * 0.4 
     saved_cost_today = int(saved_kwh_today * 150)
-    
-    # 누적 성과 (기본 베이스 숫자에 오늘의 성과를 더함)
     cumulative_kwh = saved_kwh_today + 124.0
     cumulative_cost = int(cumulative_kwh * 150)
 
-    # 4. 앱(프론트엔드)에서 쓰기 좋게 딕셔너리로 묶어서 응답
     return {
         "today": {
             "energy_saved_kwh": round(saved_kwh_today, 1),
