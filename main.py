@@ -231,7 +231,6 @@ def get_data():
         
         if state["power"].get(p_str) == False:
             row["is_on"] = False
-            row["power"] = 0.0
             row["action_reason"] = "차단 상태"
 
     result.sort(key=lambda x: x.get("port_number", 1))
