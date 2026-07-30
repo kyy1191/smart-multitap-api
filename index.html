@@ -647,6 +647,8 @@
         // 이 값(mW)보다 높으면 켜짐, 이하면(대기전력만 흐르는 상태로 보고) 꺼짐으로 표시.
         const POWER_ON_THRESHOLD_MW = 50; // 50mW
 
+        // 🤖 2026-07-31: 실제 하드웨어는 포트 2개(포트1=Red LED, 포트2=Yellow LED)뿐이라
+        // 근거 없는 3번째 가상 포트(조명 스탠드)를 제거 - AI 지문 인식 카드와 실제 배선을 맞춤.
         const INITIAL_STRIPS_DATA = [
             {
                 id: 'strip-1',
@@ -655,8 +657,7 @@
                 room: '거실',
                 ports: [
                     { id: 1, device_id:"multitap_port1_1", name: 'TV', room: '거실', status: 'Off', type: 'Always-on', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 2, device_id:"multitap_port1_2", name: '공기청정기', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } },
-                    { id: 3, device_id:"multitap_port1_3", name: '조명 스탠드', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
+                    { id: 2, device_id:"multitap_port1_2", name: '공기청정기', room: '거실', status: 'Off', type: 'Normal', voltage: '0 V', current: '0 mA', power: '0 mW', standbyPower: '0 mW', todayUsage: 0, continuousUsage: 0, schedule: { startH: '00', startM: '00', endH: '00', endM: '00', startPM: 'AM', endPM: 'AM', active: false } }
                 ]
             }
         ];
@@ -1550,7 +1551,69 @@
                                             </button>
                                         </div>
                                     </div>
-                                    
+
+                                    {/* 🤖 AI 전력 지문 인식 결과 (2026-07-31 추가) - 항상 노출, 펼치기 없이 바로 보임 */}
+                                    <div className="px-6 pb-6">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">PORT{port.id}</span>
+                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${sensor?.recognized_device_name ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                                                {sensor?.recognized_device_name ? '● 분석 완료' : '○ 판별 대기'}
+                                            </span>
+                                        </div>
+
+                                        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-center gap-3 mb-4">
+                                            <div className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center text-gray-400 shrink-0">
+                                                <Icons.Sparkles size={18} />
+                                            </div>
+                                            <div className="flex flex-col min-w-0">
+                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wide">AI 인식 기기</span>
+                                                <span className="text-lg font-extrabold text-gray-900 leading-tight truncate">{sensor?.recognized_device_name || `PORT${port.id}`}</span>
+                                                {!sensor?.recognized_device_name && (
+                                                    <span className="text-[10px] font-medium text-gray-400 mt-0.5">판별 대기 (신호 약함/대기전력)</span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-2 mb-4">
+                                            <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
+                                                <p className="text-[8px] font-bold text-blue-600 uppercase mb-1">현재 전력</p>
+                                                <p className="text-sm font-bold text-blue-700">{Number(sensor?.power ?? 0).toFixed(1)}mW</p>
+                                            </div>
+                                            <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
+                                                <p className="text-[8px] font-bold text-purple-600 uppercase mb-1">현재 전류</p>
+                                                <p className="text-sm font-bold text-purple-700">{Number(sensor?.current ?? 0).toFixed(2)}mA</p>
+                                            </div>
+                                            <div className="bg-amber-50 rounded-xl p-3 border border-amber-100">
+                                                <p className="text-[8px] font-bold text-amber-600 uppercase mb-1">현재 전압</p>
+                                                <p className="text-sm font-bold text-amber-700">{Number(sensor?.voltage ?? 0).toFixed(1)}V</p>
+                                            </div>
+                                        </div>
+
+                                        {sensor?.fingerprint_matches?.length > 0 && (
+                                            <div className="bg-white rounded-2xl p-4 border border-gray-100">
+                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-3">Fingerprint 비교 결과</p>
+                                                <div className="space-y-2.5">
+                                                    {sensor.fingerprint_matches.map((m) => {
+                                                        const barColor = m.device_name === 'Red LED' ? 'bg-red-500' : m.device_name === 'Yellow LED' ? 'bg-yellow-400' : 'bg-gray-400';
+                                                        return (
+                                                            <div key={m.device_name}>
+                                                                <div className="flex items-center justify-between mb-1">
+                                                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-gray-600">
+                                                                        <span className={`w-2 h-2 rounded-full ${barColor}`} />{m.device_name}
+                                                                    </span>
+                                                                    <span className="text-xs font-bold text-gray-700">{m.confidence}%</span>
+                                                                </div>
+                                                                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                                                    <div className={`h-full rounded-full ${barColor}`} style={{width: `${m.confidence}%`}} />
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {/* 2. 하단 상세 정보 영역 (펼쳤을 때 보이는 부분) */}
                                     <div className={`transition-all duration-300 overflow-hidden ${expandedPorts[port.id] ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
                                         <div className="px-6 pb-6 pt-2 space-y-6">
