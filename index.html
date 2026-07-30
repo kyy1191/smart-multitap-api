@@ -2536,16 +2536,17 @@
                 setWifiConnected(isOnline);
                 setWifiLastUpdated(new Date().toLocaleTimeString());
 
-                // 온라인/오프라인 이벤트로 실시간 감지
+                // 온라인/오프라인 이벤트로 실시간 감지 (navigator.onLine 기반이라 신뢰도가 낮음 -
+                // 데이터 켜져있으면 와이파이만 꺼도 true로 나옴. 그래서 서버엔 안 쓰고 화면만 반영)
                 const handleOnline = () => {
                     setWifiConnected(true);
                     setWifiLastUpdated(new Date().toLocaleTimeString());
-                    if (onWifiChange) onWifiChange(true, currentSSID);
+                    if (onWifiChange) onWifiChange(true, currentSSID, false);
                 };
                 const handleOffline = () => {
                     setWifiConnected(false);
                     setWifiLastUpdated(new Date().toLocaleTimeString());
-                    if (onWifiChange) onWifiChange(false, currentSSID);
+                    if (onWifiChange) onWifiChange(false, currentSSID, false);
                 };
 
                 window.addEventListener('online', handleOnline);
@@ -2561,7 +2562,7 @@
                         const data = await res.json();
                         setWifiConnected(prev => {
                             if (data.connected !== prev) {
-                                if (onWifiChange) onWifiChange(data.connected, currentSSID);
+                                if (onWifiChange) onWifiChange(data.connected, currentSSID, false);
                                 return data.connected;
                             }
                             return prev;
@@ -2991,16 +2992,21 @@
                 return translations[language][key] || key;
             };
             
-            const handleWifiChange = async (connected, ssid = currentSSID) => {
-                try {
-                    await fetch('https://smart-multitap-api.onrender.com/wifi-status', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ connected: connected, ssid: ssid })
-                    });
-                    console.log(`서버에 와이파이 상태(${connected}, ${ssid}) 전송 완료!`);
-                } catch (error) {
-                    console.error("와이파이 상태 전송 실패:", error);
+            // persistToServer=false로 부르면 서버에 다시 쓰지 않고 로컬 반영/차단만 수행.
+            // (라즈베리파이가 유일한 진짜 감지 소스여야 하는데, 브라우저 자체 이벤트나 서버값을
+            // 다시 읽어와 동기화하는 폴링 쪽에서도 매번 덮어쓰면 서로 값이 충돌해서 상태가 꼬임)
+            const handleWifiChange = async (connected, ssid = currentSSID, persistToServer = true) => {
+                if (persistToServer) {
+                    try {
+                        await fetch('https://smart-multitap-api.onrender.com/wifi-status', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ connected: connected, ssid: ssid })
+                        });
+                        console.log(`서버에 와이파이 상태(${connected}, ${ssid}) 전송 완료!`);
+                    } catch (error) {
+                        console.error("와이파이 상태 전송 실패:", error);
+                    }
                 }
 
                 if (!connected) {
@@ -3131,13 +3137,13 @@
                     console.log('[Wi-Fi] 인터넷 연결됨');
                     setWifiConnected(true);
                     setWifiDisconnectTime(null);
-                    handleWifiChange(true, currentSSID);
+                    handleWifiChange(true, currentSSID, false);
                 };
                 const handleOffline = () => {
                     console.log('[Wi-Fi] 인터넷 연결 끊김');
                     setWifiConnected(false);
                     setWifiDisconnectTime(Date.now());
-                    handleWifiChange(false, currentSSID);
+                    handleWifiChange(false, currentSSID, false);
                 };
 
                 window.addEventListener('online', handleOnline);
@@ -3153,7 +3159,7 @@
                         setWifiConnected(prev => {
                             if (data.connected !== prev) {
                                 setWifiDisconnectTime(data.connected ? null : Date.now());
-                                handleWifiChange(data.connected, currentSSID);
+                                handleWifiChange(data.connected, currentSSID, false);
                                 return data.connected;
                             }
                             return prev;
@@ -3177,7 +3183,7 @@
                 setTimeout(() => {
                     loadData();
                     fetchEsgReport();
-                    handleWifiChange(navigator.onLine, currentSSID);
+                    handleWifiChange(navigator.onLine, currentSSID, false);
                 }, 500);
 
                 // 3초마다 센서 데이터 폴링을 10초로 연장하고, 주력은 실시간 웹소켓 연동
