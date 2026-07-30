@@ -167,7 +167,13 @@ FP_CONFIDENCE_GAP = 12.0        # 2위와 이만큼 이상 벌어져야 확정 (
 # 같은 날 Blue LED 지문을 아예 제거함 - 전력이 0.3mW 수준으로 대기전력과 사실상 구분이
 # 안 돼서, 켜져있지도 않은 상태가 계속 "Blue LED"로 고신뢰도 오인식되던 게 실제 원인이었음
 # (포트가 대기전력일 때 "판별 대기"가 안 뜨던 문제도 이게 원인 - Blue 제거로 함께 해결됨).
-# fingerprints의 std_power/std_current는 실측 대비 최소 12% 하한선을 둬서 드리프트에 관대해지도록 함.
+#
+# ⚠️ 옆 포트 켜짐/꺼짐에 따라 전력 새깅이 있는 것도 실측으로 확인했지만("shared"/"solo" 컨텍스트
+# 분리를 한때 시도함), 조합별(옆 포트에 뭐가 꽂혀있는지)로도 값이 또 달라져서 완전히 커버하려면
+# 서버가 알 수 없는 "지금 물리적으로 뭐가 꽂혀있는지"를 가정해야 하는 근본적인 한계가 있었음
+# (2026-07-31, 사용자 판단으로 폐기). 대신 기본 조합(포트1=Red, 포트2=Yellow) 실측 + 그 외
+# 상태들을 합쳐 표준편차를 넉넉하게 잡는 단순한 단일 지문 방식으로 되돌림 - 새깅으로 인한
+# 변동은 컨텍스트 분리가 아니라 std_power/std_current 하한선(실측 대비 최소 12%)으로 흡수한다.
 FP_CACHE_TTL = 30               # 초 - 매 센서 메시지마다 DB 조회하지 않도록 캐싱
 
 fingerprints_cache: List[dict] = []
@@ -216,31 +222,17 @@ def recognized_name_from_matches(matches: List[dict]) -> Optional[str]:
         return None
     return top["device_name"]
 
-def get_context_for_port(port_number: int, state: dict) -> str:
-    # 2026-07-31: 두 포트가 전원을 공유해서(레귤레이터 새깅) 옆 포트 on/off에 따라 같은
-    # 기기라도 실측 전력이 30%+ 차이나는 게 실측으로 확인됨 (포트2 끄자 포트1이 144->190mW로
-    # 즉시 점프). 그래서 지문을 "옆 포트 켜짐(shared)"/"옆 포트 꺼짐(solo)" 둘로 나눠 학습하고,
-    # 인식할 때도 지금 실제 옆 포트 상태에 맞는 지문끼리만 비교한다.
-    other_port = 2 if port_number == 1 else 1
-    other_on = bool(state.get("power", {}).get(str(other_port), False))
-    return "shared" if other_on else "solo"
-
-def attach_fingerprint_fields(row: dict, context: str) -> dict:
+def attach_fingerprint_fields(row: dict) -> dict:
     fingerprints = get_fingerprints_cached()
-    matching_fps = [fp for fp in fingerprints if fp.get("context", "shared") == context]
-    if not matching_fps:
-        matching_fps = fingerprints  # 해당 컨텍스트로 학습된 지문이 아직 없으면 전체에서 폴백
-    matches = match_device_to_fingerprints(row.get("power", 0.0), row.get("current", 0.0), row.get("voltage", 0.0), matching_fps)
+    matches = match_device_to_fingerprints(row.get("power", 0.0), row.get("current", 0.0), row.get("voltage", 0.0), fingerprints)
     row["fingerprint_matches"] = matches
     row["recognized_device_name"] = recognized_name_from_matches(matches)
     row["recognition_confidence"] = matches[0]["confidence"] if matches else None
-    row["fingerprint_context"] = context
     return row
 
 class FingerprintTrainRequest(BaseModel):
     device_name: str
     port_number: int
-    context: Optional[str] = None  # "shared" | "solo" - 안 주면 학습 시점 옆 포트 상태로 자동 판정
 
 @app.get("/fingerprints")
 def get_fingerprints():
@@ -302,7 +294,6 @@ def train_fingerprint(req: FingerprintTrainRequest):
     fp_row = {
         "device_name": req.device_name,
         "port_number": req.port_number,
-        "context": req.context or get_context_for_port(req.port_number, get_state()),
         "avg_power": round(avg_power, 2),
         "avg_current": round(avg_current, 3),
         "avg_voltage": round(avg_voltage, 3),
@@ -314,7 +305,7 @@ def train_fingerprint(req: FingerprintTrainRequest):
         "last_trained_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        supabase.table("fingerprints").upsert(fp_row, on_conflict="device_name,context").execute()
+        supabase.table("fingerprints").upsert(fp_row, on_conflict="device_name").execute()
     except Exception as e:
         return {"status": "error", "message": f"fingerprints 저장 실패: {e}"}
 
@@ -431,7 +422,7 @@ def get_data():
             row["is_on"] = False
             row["action_reason"] = "차단 상태"
 
-        attach_fingerprint_fields(row, get_context_for_port(row.get("port_number", 1), state))
+        attach_fingerprint_fields(row)
 
     result.sort(key=lambda x: x.get("port_number", 1))
     return result
@@ -625,7 +616,7 @@ def process_sensor_data(data: PowerData):
             flush_db_buffer()
 
     # ⚡ 2. 실시간 캐시/브로드캐스트용에는 AI 인식 결과(fingerprint_matches 등)까지 얹어서 반환
-    attach_fingerprint_fields(data_dict, get_context_for_port(data.port_number, state))
+    attach_fingerprint_fields(data_dict)
     latest_live_cache[data.port_number] = data_dict
 
     return data_dict
