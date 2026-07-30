@@ -1494,15 +1494,19 @@
                                             </span>
                                         </div>
 
-                                        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-center gap-3 mb-4">
-                                            <div className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center text-gray-400 shrink-0">
-                                                <Icons.Sparkles size={18} />
+                                        <div className={`rounded-2xl p-4 border flex items-center gap-3 mb-4 ${sensor?.recognized_device_name ? 'bg-gray-50 border-gray-100' : 'bg-amber-50 border-amber-200 border-dashed'}`}>
+                                            <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${sensor?.recognized_device_name ? 'bg-white border-gray-200 text-gray-400' : 'bg-white border-amber-300 text-amber-500'}`}>
+                                                {sensor?.recognized_device_name ? <Icons.Sparkles size={18} /> : <Icons.AlertCircle size={18} />}
                                             </div>
                                             <div className="flex flex-col min-w-0">
-                                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wide">AI 인식 기기</span>
-                                                <span className="text-lg font-extrabold text-gray-900 leading-tight truncate">{sensor?.recognized_device_name || `PORT${port.id}`}</span>
-                                                {!sensor?.recognized_device_name && (
-                                                    <span className="text-[10px] font-medium text-gray-400 mt-0.5">판별 대기 (신호 약함/대기전력)</span>
+                                                <span className={`text-[9px] font-bold uppercase tracking-wide ${sensor?.recognized_device_name ? 'text-gray-400' : 'text-amber-600'}`}>AI 인식 기기</span>
+                                                {sensor?.recognized_device_name ? (
+                                                    <span className="text-lg font-extrabold text-gray-900 leading-tight truncate">{sensor.recognized_device_name}</span>
+                                                ) : (
+                                                    <>
+                                                        <span className="text-base font-extrabold text-amber-700 leading-tight">판별 대기 중</span>
+                                                        <span className="text-[10px] font-medium text-amber-600/80 mt-0.5">신호 약함 · 대기전력 - 아직 기기를 특정할 수 없어요</span>
+                                                    </>
                                                 )}
                                             </div>
                                         </div>
@@ -2384,62 +2388,7 @@
                                                         </button>
                                                     </div>
 
-                                                    {/* 주변 Wi-Fi 목록 */}
-                                                    <div className="mt-2">
-                                                        <div className="p-4 flex items-center justify-between bg-white border-b border-gray-100">
-                                                            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-tight">
-                                                                {language === 'KR' ? '사용 가능한 Wi-Fi 네트워크' : 'Available Wi-Fi Networks'}
-                                                            </span>
-                                                            <button 
-                                                                onClick={handlePromptWifi}
-                                                                className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1"
-                                                            >
-                                                                <Icons.Plus size={12} />
-                                                                {language === 'KR' ? '직접 연결하기' : 'Connect Manually'}
-                                                            </button>
-                                                        </div>
-
-                                                        {/* 🟢 3개 제한 & 더보기/접기 버튼 목록 */}
-                                                        {(() => {
-                                                            const availableWifis = wifiList.filter(n => n.name !== currentSSID);
-                                                            const visibleWifis = showAllWifi ? availableWifis : availableWifis.slice(0, 3);
-
-                                                            return (
-                                                                <div className="bg-white divide-y divide-gray-100">
-                                                                    {visibleWifis.map((net, idx) => (
-                                                                        <div 
-                                                                            key={idx} 
-                                                                            className="p-4 flex items-center justify-between cursor-pointer hover:bg-green-50/60 transition-colors group" 
-                                                                            onClick={() => connectWifi(net.name)}
-                                                                        >
-                                                                            <div className="flex items-center gap-3">
-                                                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 group-hover:text-green-600"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8 12.55a4 4 0 0 1 8 0"/><path d="M12 18.55a8 8 0 0 1 0 0"/></svg>
-                                                                                <span className="text-sm font-bold text-gray-800">{net.name}</span>
-                                                                            </div>
-                                                                            <div className="flex items-center gap-2">
-                                                                                {net.secure && <Icons.Shield size={14} className="text-gray-300" />}
-                                                                                <span className="text-[11px] font-bold text-green-600 bg-green-50 group-hover:bg-green-600 group-hover:text-white px-2.5 py-1 rounded-full transition-all">
-                                                                                    {language === 'KR' ? '연결' : 'Connect'}
-                                                                                </span>
-                                                                            </div>
-                                                                        </div>
-                                                                    ))}
-
-                                                                    {/* 와이파이가 3개가 넘을 때만 아래 더보기/접기 버튼 생성 */}
-                                                                    {availableWifis.length > 3 && (
-                                                                        <button 
-                                                                            onClick={() => setShowAllWifi(!showAllWifi)}
-                                                                            className="w-full py-3 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-500 transition-colors flex items-center justify-center gap-1 border-t border-gray-100"
-                                                                        >
-                                                                            {showAllWifi 
-                                                                                ? (language === 'KR' ? '접기 ∧' : 'Show Less ∧') 
-                                                                                : (language === 'KR' ? `더 보기 ∨` : ` ∨`)}
-                                                                        </button>
-                                                                    )}
-                                                                </div>
-                                                            );
-                                                        })()}
-                                                    </div>
+                                                    {/* 🗑️ 2026-07-31: "사용 가능한 Wi-Fi 네트워크" 목록 섹션 삭제 요청으로 제거 (현재 연결된 네트워크 표시/Wi-Fi 변경 버튼은 유지) */}
                                                 </div>
                                             </MinimalCard>
                                         </div>
