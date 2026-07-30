@@ -245,6 +245,8 @@ async def control_port(req: ControlData):
     state["power"][str(req.port_number)] = req.is_on
     if req.is_on:
         state["last_toggle_time"][str(req.port_number)] = time.time()
+        # 대시보드에서 다시 켜면 과열/AI 안전차단 잠금도 함께 해제 (예전부터 가능했던 동작, 유지)
+        state.setdefault("safety_lock", {})[str(req.port_number)] = False
     save_state(state)
 
     # 실시간 캐시 업데이트
@@ -363,27 +365,40 @@ async def async_process_sensor_data(data: PowerData):
     })
 
 # [API 3] 센서 데이터 수신 처리 (실시간 표출 + DB 버퍼링)
+#
+# 2026-07-30 재설계: 예전엔 state["power"][p]==False면 무조건 최우선으로 차단 상태를 유지했는데,
+# 이 플래그가 "대시보드 수동 OFF"든 "AI/과열 안전차단"이든 구분 없이 똑같이 취급되면서
+# 물리 스위치를 아무리 켜도 서버가 계속 예전 수동OFF 기록으로 되돌려버리는 문제가 있었음
+# (제어 동기화 버그를 고치고 나서야 이게 실제로 기기까지 전달되기 시작하며 드러남).
+# 이제는 안전차단(과열/AI)만 state["safety_lock"]로 따로 표시해서 물리 스위치도 못 이기게 하고,
+# 그 외에는 기기가 실제로 보고하는 릴레이 상태(=물리 스위치 조작 결과 포함)를 그대로 신뢰한다.
 def process_sensor_data(data: PowerData):
     global db_buffer, last_flush_time
     state = get_state()
     p_str = str(data.port_number)
     port_type = state["types"].get(p_str, "일반")
-    if state["power"].get(p_str) == False:
+
+    if state.get("safety_lock", {}).get(p_str):
+        # 과열/AI 위험판단으로 이미 강제 차단된 상태 - 물리 스위치로도 못 풀리고, 대시보드에서 다시 켜야만 해제됨
         data.is_on = False
-        data.action_reason = "차단 상태"
-    elif port_type == "상시":
-        data.is_on = True
-        data.action_reason = "상시기기 (항시 작동)"
+        data.action_reason = state.get("safety_lock_reason", {}).get(p_str, "안전 차단 상태")
+        state["power"][p_str] = False
+    elif data.temperature >= 80.0:
+        data.is_on = False
+        data.action_reason = "과열 차단 (80도 초과)"
+        state["power"][p_str] = False
+        state.setdefault("safety_lock", {})[p_str] = True
+        state.setdefault("safety_lock_reason", {})[p_str] = data.action_reason
     else:
-        if data.temperature >= 80.0:
-            data.is_on = False
-            data.action_reason = "과열 차단 (80도 초과)"
-            state["power"][p_str] = False
+        # 물리 스위치가 이김: 기기가 방금 보고한 on/off를 그대로 서버 상태에 반영
+        state["power"][p_str] = data.is_on
+        if not data.is_on:
+            data.action_reason = "차단 상태"
+        elif port_type == "상시":
+            data.action_reason = "상시기기 (항시 작동)"
         else:
-            # 실시간 전력 표출 딜레이를 최소화하기 위해 GPT 판단 빈도를 조절하거나,
-            # 현재 릴레이 On 상태면 우선 무조건 정상으로 표시
             data.action_reason = "정상 작동"
-            
+
             # (GPT 판단은 딜레이가 심하므로, 50W 이상이거나 온도가 60도 이상일 때만 10초에 한 번 선별적 호출로 최적화)
             # 실제 센서 단위는 mW이므로 50W = 50000mW로 비교해야 함 (mW 그대로 비교하면 거의 모든 부하에서 AI가 호출되어 사소한 부하도 오탐 차단됨)
             if data.power > 50000.0 or data.temperature > 60.0:
@@ -395,7 +410,9 @@ def process_sensor_data(data: PowerData):
                         data.is_on = False
                         data.action_reason = "AI 판단: 위험 및 낭비 감지 차단"
                         state["power"][p_str] = False
-            
+                        state.setdefault("safety_lock", {})[p_str] = True
+                        state.setdefault("safety_lock_reason", {})[p_str] = data.action_reason
+
     save_state(state)
 
     data_dict = data.dict()
