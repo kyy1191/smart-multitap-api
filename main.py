@@ -6,6 +6,7 @@ import os
 import json
 import time
 import asyncio
+from datetime import datetime, timezone
 from typing import List, Optional
 from google import genai
 from google.genai import types
@@ -154,6 +155,154 @@ def set_port_type(req: PortTypeUpdate):
     save_state(state)
     return {"message": "타입 저장 완료", "port_number": req.port_number, "device_type": req.device_type}
 
+# [전력 지문(Fingerprint) 인식 기능] 2026-07-31
+# 별도 Next.js 프로토타입(AI_Fingerprint_Platform)에서 검증한 로직(utils/similarity.ts,
+# lib/trainFromHistory.ts)을 그대로 Python으로 이식. Supabase `fingerprints` 테이블에
+# 학습 통계를 영구 저장(서버 재시작/재배포에도 유지) - 예전엔 JS 배열 메모리에만 있어서
+# 매번 날아갔음. 대시보드 포트 카드에 AI 인식 결과를 얹기 위해 /get-data와 sensor_upload
+# 브로드캐스트 둘 다에 fingerprint_matches/recognized_device_name을 채워 넣는다.
+FP_CONFIDENCE_THRESHOLD = 65.0  # 이 이상이어야 "인식됨"으로 취급
+FP_CONFIDENCE_GAP = 20.0        # 2위와 이만큼 이상 벌어져야 확정 (애매하면 PORT#로 표시)
+FP_CACHE_TTL = 30               # 초 - 매 센서 메시지마다 DB 조회하지 않도록 캐싱
+
+fingerprints_cache: List[dict] = []
+fingerprints_cache_time = 0.0
+
+def load_fingerprints_from_db() -> List[dict]:
+    if not supabase:
+        return []
+    try:
+        res = supabase.table("fingerprints").select("*").order("device_name").execute()
+        return res.data or []
+    except Exception as e:
+        print("[fingerprints] 조회 에러:", e)
+        return []
+
+def get_fingerprints_cached() -> List[dict]:
+    global fingerprints_cache, fingerprints_cache_time
+    now = time.time()
+    if now - fingerprints_cache_time > FP_CACHE_TTL:
+        fingerprints_cache = load_fingerprints_from_db()
+        fingerprints_cache_time = now
+    return fingerprints_cache
+
+def match_device_to_fingerprints(power: float, current: float, voltage: float, fingerprints: List[dict]) -> List[dict]:
+    if not fingerprints:
+        return []
+    scored = []
+    for fp in fingerprints:
+        d_power = (power - fp.get("avg_power", 0)) / max(fp.get("std_power", 0) or 0, 0.5)
+        d_current = (current - fp.get("avg_current", 0)) / max(fp.get("std_current", 0) or 0, 0.01)
+        d_voltage = (voltage - fp.get("avg_voltage", 5.2)) / 5
+        dist = (d_power ** 2 + d_current ** 2 + d_voltage ** 2 * 0.2) ** 0.5
+        scored.append({"device_name": fp["device_name"], "score": 1 / (1 + dist)})
+    total = sum(s["score"] for s in scored) or 1
+    ranked = [{"device_name": s["device_name"], "confidence": round((s["score"] / total) * 100, 1)} for s in scored]
+    ranked.sort(key=lambda x: x["confidence"], reverse=True)
+    return ranked
+
+def recognized_name_from_matches(matches: List[dict]) -> Optional[str]:
+    if not matches:
+        return None
+    top = matches[0]
+    if top["confidence"] < FP_CONFIDENCE_THRESHOLD:
+        return None
+    if len(matches) > 1 and (top["confidence"] - matches[1]["confidence"]) < FP_CONFIDENCE_GAP:
+        return None
+    return top["device_name"]
+
+def attach_fingerprint_fields(row: dict) -> dict:
+    fingerprints = get_fingerprints_cached()
+    matches = match_device_to_fingerprints(row.get("power", 0.0), row.get("current", 0.0), row.get("voltage", 0.0), fingerprints)
+    row["fingerprint_matches"] = matches
+    row["recognized_device_name"] = recognized_name_from_matches(matches)
+    row["recognition_confidence"] = matches[0]["confidence"] if matches else None
+    return row
+
+class FingerprintTrainRequest(BaseModel):
+    device_name: str
+    port_number: int
+
+@app.get("/fingerprints")
+def get_fingerprints():
+    return {"fingerprints": get_fingerprints_cached()}
+
+@app.post("/fingerprints/train")
+def train_fingerprint(req: FingerprintTrainRequest):
+    if not supabase:
+        return {"status": "error", "message": "Supabase 연동이 끊겨 있습니다."}
+
+    # PostgREST 기본 max-rows=1000이라 .range()로 페이지네이션해서 이 포트가 켜져있던
+    # 동안의(is_on=true) 실측 히스토리 전체를 긁어옴 - 꺼짐 상태를 섞으면 표준편차가
+    # 비정상적으로 커져서 다른 포트 데이터까지 이 지문 쪽으로 오분류되는 문제가 있었음.
+    PAGE_SIZE = 1000
+    MAX_SAMPLES = 20000
+    rows: List[dict] = []
+    offset = 0
+    while len(rows) < MAX_SAMPLES:
+        try:
+            res = (
+                supabase.table("sensor_data")
+                .select("power,current,voltage")
+                .eq("device_id", "smart_multitap_1")
+                .eq("port_number", req.port_number)
+                .eq("is_on", True)
+                .range(offset, offset + PAGE_SIZE - 1)
+                .execute()
+            )
+        except Exception as e:
+            return {"status": "error", "message": f"sensor_data 조회 실패: {e}"}
+        page = res.data or []
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+
+    if not rows:
+        return {"status": "error", "message": "학습할 실측 데이터가 없습니다 (해당 포트가 켜진 기록 없음)."}
+
+    powers = [float(r.get("power") or 0) for r in rows]
+    currents = [float(r.get("current") or 0) for r in rows]
+    voltages = [float(r.get("voltage") or 0) for r in rows]
+
+    avg_power = sum(powers) / len(powers)
+    avg_current = sum(currents) / len(currents)
+    avg_voltage = sum(voltages) / len(voltages)
+    std_power = (sum((p - avg_power) ** 2 for p in powers) / max(len(powers) - 1, 1)) ** 0.5
+    std_current = (sum((c - avg_current) ** 2 for c in currents) / max(len(currents) - 1, 1)) ** 0.5
+
+    distances = []
+    for p, c in zip(powers, currents):
+        dp = (p - avg_power) / max(std_power, 0.5)
+        dc = (c - avg_current) / max(std_current, 0.05)
+        distances.append((dp ** 2 + dc ** 2) ** 0.5)
+    avg_similarity = sum(100 / (1 + d) for d in distances) / len(distances)
+
+    fp_row = {
+        "device_name": req.device_name,
+        "port_number": req.port_number,
+        "avg_power": round(avg_power, 2),
+        "avg_current": round(avg_current, 3),
+        "avg_voltage": round(avg_voltage, 3),
+        "std_power": round(std_power, 2),
+        "std_current": round(std_current, 3),
+        "status": "trained",
+        "training_count": len(rows),
+        "average_similarity": round(avg_similarity, 1),
+        "last_trained_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        supabase.table("fingerprints").upsert(fp_row, on_conflict="device_name").execute()
+    except Exception as e:
+        return {"status": "error", "message": f"fingerprints 저장 실패: {e}"}
+
+    global fingerprints_cache_time
+    fingerprints_cache_time = 0.0  # 다음 조회 때 즉시 새로 불러오도록 캐시 무효화
+
+    return {"status": "success", "fingerprint": fp_row}
+
 # [AI 판단 로직]
 def ask_gpt_to_cut_power(voltage, current, power, temperature):
     if not gpt_client:
@@ -261,6 +410,8 @@ def get_data():
         if state["power"].get(p_str) == False:
             row["is_on"] = False
             row["action_reason"] = "차단 상태"
+
+        attach_fingerprint_fields(row)
 
     result.sort(key=lambda x: x.get("port_number", 1))
     return result
@@ -443,16 +594,19 @@ def process_sensor_data(data: PowerData):
     save_state(state)
 
     data_dict = data.dict()
-    # ⚡ 1. 실시간 표출용 메모리 캐시에 즉시 업데이트 (대시보드는 항상 최신 실시간 수치 표시)
-    latest_live_cache[data.port_number] = data_dict
 
-    # 📦 2. Supabase DB 저장을 위해 버퍼에 누적 (로컬 컨트롤 패널에서 꺼놨으면 통째로 건너뜀 - 테스트 중 DB에 안 쌓이게)
+    # 📦 1. Supabase DB 저장을 위해 버퍼에 누적 (로컬 컨트롤 패널에서 꺼놨으면 통째로 건너뜀 - 테스트 중 DB에 안 쌓이게)
+    # ⚠️ sensor_data 테이블 스키마에 없는 컬럼(fingerprint_matches 등)이 섞이면 insert가 실패하므로
+    # 얕은 복사본을 넣는다 - 아래에서 data_dict에 AI 인식 필드를 추가로 얹기 전에 분리.
     if state.get("db_upload_enabled", True):
-        db_buffer.append(data_dict)
+        db_buffer.append(dict(data_dict))
 
-        # 3. 버퍼 개수가 모였거나 일정 시간이 지나면 DB에 모아서 저장 (배치 인서트)
         if len(db_buffer) >= MAX_BUFFER_SIZE or (time.time() - last_flush_time) >= FLUSH_INTERVAL:
             flush_db_buffer()
+
+    # ⚡ 2. 실시간 캐시/브로드캐스트용에는 AI 인식 결과(fingerprint_matches 등)까지 얹어서 반환
+    attach_fingerprint_fields(data_dict)
+    latest_live_cache[data.port_number] = data_dict
 
     return data_dict
 
