@@ -127,6 +127,24 @@ class ControlData(BaseModel):
     port_number: int
     is_on: bool
 
+# [API 2.1] 포트 타입 설정/조회 (상시/일반/위험 - 프론트엔드에만 있고 서버엔 없던 걸 저장하도록 추가)
+# 프론트엔드(index.html)가 이미 POST /set-port { port_number, device_type }로 호출하고 있었음
+# (백엔드에 대응 엔드포인트가 없어 조용히 실패 중이었음 - 필드명/경로를 프론트에 맞춤)
+class PortTypeUpdate(BaseModel):
+    port_number: int
+    device_type: str  # "상시" | "일반" | "위험"
+
+@app.get("/port-types")
+def get_port_types():
+    return get_state().get("types", {})
+
+@app.post("/set-port")
+def set_port_type(req: PortTypeUpdate):
+    state = get_state()
+    state["types"][str(req.port_number)] = req.device_type
+    save_state(state)
+    return {"message": "타입 저장 완료", "port_number": req.port_number, "device_type": req.device_type}
+
 # [AI 판단 로직]
 def ask_gpt_to_cut_power(voltage, current, power, temperature):
     if not gpt_client:
