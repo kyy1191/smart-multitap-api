@@ -2821,14 +2821,19 @@
                                 // 🟢 [해결 1] 하드웨어가 켜질 시간을 벌어주기 위해 방패를 1.5초(1500ms)로 넉넉하게 늘립니다.
                                 const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
 
-                                // 🔌 물리 스위치가 릴레이와 별개로 붙어있어 서버의 on/off 플래그(is_on)가 실배선과 어긋날 수 있으므로,
-                                // 실측 전력이 임계값을 넘는지로 켜짐/꺼짐을 판단한다 (대기전력만 흐르면 꺼짐으로 표시). 모든 포트 동일 적용.
-                                // ⚠️ sensor.power는 이미 mW 단위 숫자이므로 그대로 비교/표시한다 (W로 착각해 ×1000/÷1000 하지 말 것).
+                                // 🔌 2026-07-30 밤 재변경: 예전엔 물리 스위치가 is_on과 어긋날 수 있어서 전력
+                                // 임계값(50mW)으로 켜짐/꺼짐을 판단했는데, 그 물리스위치 동기화 버그는 같은 날
+                                // 백엔드에서 이미 근본적으로 고쳐져서(물리스위치 상태가 항상 is_on에 정확히
+                                // 반영됨, main.py process_sensor_data 참고) 더 이상 유효한 이유가 아님.
+                                // 오히려 저전류 LED(예: 교체된 blue LED, on 상태에서도 겨우 16mW로 대기전력
+                                // 14mW와 거의 구분 안 됨 - 실측으로 확인)에서는 전력 임계값 방식이 켜져있는데도
+                                // 꺼짐으로 잘못 표시하는 새 문제를 만듦. 그래서 is_on을 그대로 신뢰하는 방식으로 되돌림.
+                                // ⚠️ sensor.power는 mW 단위 숫자, standbyPower 표시에만 씀 (on/off 판단에는 미사용).
                                 const powerVal = parseFloat(sensor.power) || 0;
-                                const isOnByPower = powerVal > POWER_ON_THRESHOLD_MW;
+                                const isOnByServer = Boolean(sensor.is_on);
 
-                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 실측 전력 기준을 따름!
-                                const isOn = isLocked ? (port.status === 'On') : isOnByPower;
+                                // 🟢 [해결 3] 방패가 켜져 있으면 내 화면 상태(클릭한 상태)를 유지하고, 아니면 서버의 is_on을 따름!
+                                const isOn = isLocked ? (port.status === 'On') : isOnByServer;
 
                                 let newContinuous = port.continuousUsage || 0;
                                 if (!isOn || (isOn && port.status === 'Off')) {
@@ -2938,8 +2943,8 @@
                                         if (strip.device_id === sensor.device_id && port.id === sensor.port_number) {
                                             const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
                                             const powerVal = parseFloat(sensor.power) || 0;
-                                            const isOnByPower = powerVal > POWER_ON_THRESHOLD_MW;
-                                            const isOn = isLocked ? (port.status === 'On') : isOnByPower;
+                                            const isOnByServer = Boolean(sensor.is_on);
+                                            const isOn = isLocked ? (port.status === 'On') : isOnByServer;
 
                                             let newContinuous = port.continuousUsage || 0;
                                             if (!isOn || (isOn && port.status === 'Off')) newContinuous = 0;
