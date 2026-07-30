@@ -161,8 +161,11 @@ def set_port_type(req: PortTypeUpdate):
 # 학습 통계를 영구 저장(서버 재시작/재배포에도 유지) - 예전엔 JS 배열 메모리에만 있어서
 # 매번 날아갔음. 대시보드 포트 카드에 AI 인식 결과를 얹기 위해 /get-data와 sensor_upload
 # 브로드캐스트 둘 다에 fingerprint_matches/recognized_device_name을 채워 넣는다.
-FP_CONFIDENCE_THRESHOLD = 65.0  # 이 이상이어야 "인식됨"으로 취급
-FP_CONFIDENCE_GAP = 20.0        # 2위와 이만큼 이상 벌어져야 확정 (애매하면 PORT#로 표시)
+FP_CONFIDENCE_THRESHOLD = 55.0  # 이 이상이어야 "인식됨"으로 취급
+FP_CONFIDENCE_GAP = 15.0        # 2위와 이만큼 이상 벌어져야 확정 (애매하면 PORT#로 표시)
+# 2026-07-31: 기존 65/20이 LED 예열에 따른 자연스러운 전력 드리프트(±20~25%)에도
+# 너무 쉽게 "판별 대기"로 빠져서 55/15로 완화 - 동시에 fingerprints의 std_power/std_current도
+# 실측 대비 최소 12%로 하한선을 둬서(위 학습값들) 드리프트에 더 관대해지도록 함께 조정함.
 FP_CACHE_TTL = 30               # 초 - 매 센서 메시지마다 DB 조회하지 않도록 캐싱
 
 fingerprints_cache: List[dict] = []
