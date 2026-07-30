@@ -647,7 +647,7 @@
         // 이 값(mW)보다 높으면 켜짐, 이하면(대기전력만 흐르는 상태로 보고) 꺼짐으로 표시.
         const POWER_ON_THRESHOLD_MW = 50; // 50mW
 
-        // 🤖 2026-07-31: 실제 하드웨어는 포트 2개(포트1=Red LED, 포트2=Yellow LED)뿐이라
+        // 🤖 2026-07-31: 실제 하드웨어는 포트 2개(포트1=Green LED, 포트2=Blue LED, 이후 교체될 수 있음)뿐이라
         // 근거 없는 3번째 가상 포트(조명 스탠드)를 제거 - AI 지문 인식 카드와 실제 배선을 맞춤.
         const INITIAL_STRIPS_DATA = [
             {
@@ -1527,7 +1527,7 @@
                                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-3">Fingerprint 비교 결과</p>
                                                 <div className="space-y-2.5">
                                                     {sensor.fingerprint_matches.map((m) => {
-                                                        const barColor = m.device_name === 'Red LED' ? 'bg-red-500' : m.device_name === 'Yellow LED' ? 'bg-yellow-400' : 'bg-gray-400';
+                                                        const barColor = m.device_name === 'Green LED' ? 'bg-green-500' : m.device_name === 'Blue LED' ? 'bg-blue-500' : m.device_name === 'Red LED' ? 'bg-red-500' : m.device_name === 'Yellow LED' ? 'bg-yellow-400' : 'bg-gray-400';
                                                         return (
                                                             <div key={m.device_name}>
                                                                 <div className="flex items-center justify-between mb-1">
