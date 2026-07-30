@@ -168,7 +168,14 @@ def _month_window(tz_name: str = TZ_NAME) -> MonthWindow:
 
 
 def _fetch_month_rows(client: Client, window: MonthWindow) -> list[dict]:
-    """이번 달, 활성 포트에 한해 (created_at, power, port_number)만 최근 MAX_ROWS_PER_FETCH개 페이지네이션으로 조회."""
+    """이번 달, 활성 포트에 한해 (created_at, power, port_number)만 최근 MAX_ROWS_PER_FETCH개 페이지네이션으로 조회.
+
+    2026-07-31 수정: 예전엔 오래된 순(asc)으로 가져왔는데, 초당 ~2건씩 쌓여서 하루~이틀
+    만에 MAX_ROWS_PER_FETCH(20000)를 넘어버림 - 그러면 캡에 걸려 "이른 시간대"만 가져오고
+    정작 "오늘"/최근 데이터는 아예 못 가져와서, 이번 달 누적 그래프가 최근 날짜에서
+    멈춘 것처럼 보이는 버그가 있었음(실측으로 확인). 최신순(desc)으로 바꿔서 캡에 걸려도
+    항상 "지금"에 가까운 데이터가 우선 포함되게 함 - _daily_avg_power_mw는 행 순서에
+    의존하지 않는 day별 딕셔너리 집계라 정렬 방향을 바꿔도 결과 계산 로직엔 영향 없음."""
     start_utc_iso = window.month_start_local.astimezone(timezone.utc).isoformat()
     rows: list[dict] = []
     offset = 0
@@ -179,7 +186,7 @@ def _fetch_month_rows(client: Client, window: MonthWindow) -> list[dict]:
             .eq("device_id", DEVICE_ID)
             .in_("port_number", ACTIVE_PORTS)
             .gte("created_at", start_utc_iso)
-            .order("created_at", desc=False)
+            .order("created_at", desc=True)
             .range(offset, offset + PAGE_SIZE - 1)
             .execute()
         )
