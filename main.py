@@ -288,6 +288,29 @@ def toggle_db_upload(req: DbUploadToggle):
     save_state(state)
     return {"message": "설정 완료", "enabled": req.enabled}
 
+# [API 2.4] 사용자(대시보드) Wi-Fi 연결 상태 기록 - 위험기기 외출 자동차단 로직이 호출
+class WifiStatus(BaseModel):
+    connected: bool
+    ssid: str = ""
+
+@app.get("/wifi-status")
+def get_wifi_status():
+    state = get_state()
+    return {
+        "connected": state.get("wifi", True),
+        "ssid": state.get("wifi_ssid", ""),
+        "updated_at": state.get("wifi_updated_at")
+    }
+
+@app.post("/wifi-status")
+def update_wifi_status(req: WifiStatus):
+    state = get_state()
+    state["wifi"] = req.connected
+    state["wifi_ssid"] = req.ssid
+    state["wifi_updated_at"] = time.time()
+    save_state(state)
+    return {"message": "기록 완료", "connected": req.connected}
+
 # [API 2.5] 라즈베리파이/PC 게이트웨이 전용 실시간 웹소켓 엔드포인트
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
