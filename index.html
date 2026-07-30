@@ -3071,6 +3071,13 @@
 
                                 if (!sensor) return port;
 
+                                // 🟢 서버에 저장된 기기 타입(상시/일반/위험)을 화면 타입으로 역변환해서 반영
+                                // (예전엔 여기서 device_type을 안 읽어서, 새로고침할 때마다 항상 기본값으로 리셋됐음)
+                                let syncedType = port.type;
+                                if (sensor.device_type === '위험') syncedType = 'High-risk';
+                                else if (sensor.device_type === '상시') syncedType = 'Always-on';
+                                else if (sensor.device_type === '일반') syncedType = 'Normal';
+
                                 // 🟢 [해결 1] 하드웨어가 켜질 시간을 벌어주기 위해 방패를 1.5초(1500ms)로 넉넉하게 늘립니다.
                                 const isLocked = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 1500);
 
@@ -3090,6 +3097,7 @@
 
                                 return {
                                     ...port,
+                                    type: syncedType,
                                     // 🟢 [해결 4] 스위치가 잠겨있더라도, 전력과 온도 데이터는 서버에서 오는 즉시 화면에 바로 꽂아줍니다!
                                     voltage: isOn ? `${sensor.voltage} V` : '0 V',
                                     current: isOn ? `${sensor.current} mA` : '0 mA',
@@ -3134,9 +3142,31 @@
 
                 window.addEventListener('online', handleOnline);
                 window.addEventListener('offline', handleOffline);
+
+                // 🟢 라즈베리파이가 로컬에서 감지한 진짜 와이파이 상태(서버 /wifi-status)를 5초마다 동기화.
+                // navigator.onLine만으로는 "와이파이 끄고 데이터는 켜둔" 상황을 감지 못 하므로,
+                // 로컬 존재감시 결과를 여기서도 반영해야 앱 전체(탭 무관)에서 실제로 작동함.
+                const wifiStatusPoll = setInterval(async () => {
+                    try {
+                        const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status');
+                        const data = await res.json();
+                        setWifiConnected(prev => {
+                            if (data.connected !== prev) {
+                                setWifiDisconnectTime(data.connected ? null : Date.now());
+                                handleWifiChange(data.connected, currentSSID);
+                                return data.connected;
+                            }
+                            return prev;
+                        });
+                    } catch (error) {
+                        // 조회 실패 시 기존 상태 유지
+                    }
+                }, 5000);
+
                 return () => {
                     window.removeEventListener('online', handleOnline);
                     window.removeEventListener('offline', handleOffline);
+                    clearInterval(wifiStatusPoll);
                 };
             }, []);
             // 1. 처음에 데이터 가져오고, 3초마다 반복 (API 연동 부활!)
