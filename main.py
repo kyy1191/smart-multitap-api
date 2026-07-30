@@ -336,15 +336,20 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # [비동기 센서 데이터 처리 백그라운드 태스크]
 async def async_process_sensor_data(data: PowerData):
+    # process_sensor_data가 data 객체를 그 자리에서 직접 수정하므로,
+    # 비교 기준으로 쓸 "ESP32가 원래 보낸 값"은 호출 전에 미리 따로 저장해둬야 함
+    # (안 그러면 아래 비교가 항상 같은 값끼리 비교하게 돼서 死코드가 됨 - 2026-07-30 발견/수정)
+    original_is_on = data.is_on
+
     loop = asyncio.get_running_loop()
     res_dict = await loop.run_in_executor(None, process_sensor_data, data)
-    
+
     # 서버에 저장된(혹은 방금 결정된) 최종 릴레이 상태
     final_is_on = get_state()["power"].get(str(data.port_number), False)
-    
+
     # AI 판단으로 차단되었거나, 상시기기인데 꺼져있어서 켜야 하거나 등
     # 게이트웨이(기기)로 실제 제어 명령을 내려야 하는 경우 동기화 패킷 전송
-    if res_dict.get("is_on") != data.is_on: 
+    if res_dict.get("is_on") != original_is_on:
         await manager.broadcast({
             "event": "control",
             "port_number": data.port_number,
