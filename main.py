@@ -20,6 +20,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# [AI 누진세 예측 기능] 2026-07-30 병합 - ai_power_prediction/ 은 완전히 분리된 모듈이라
+# main.py의 나머지 로직과 아무 상태도 공유하지 않음, 실패해도(패키지 누락 등) 서버 전체가
+# 죽지 않게 try/except로 감쌈.
+try:
+    from ai_power_prediction.api import router as power_prediction_router
+    app.include_router(power_prediction_router)
+except Exception as e:
+    print("[main] AI 누진세 예측 라우터 로드 실패 (기능만 비활성화, 서버는 계속 실행):", e)
+
 # [웹소켓 커넥션 매니저]
 class ConnectionManager:
     def __init__(self):

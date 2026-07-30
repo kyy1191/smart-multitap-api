@@ -4,3 +4,6 @@ supabase
 pydantic
 google-genai
 websockets
+paho-mqtt
+groq
+tzdata
