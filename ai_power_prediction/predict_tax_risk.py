@@ -97,16 +97,14 @@ TIER2_MAX_WH = BRACKET_3_WH
 if TARGET_MONTH_TOTAL_WH <= 0:
     TARGET_MONTH_TOTAL_WH = BRACKET_2_WH * 1.15
 
-# 요금: 2026-07-30 밤 재조정 — 게이지/구간확률은 작게 축소된 실측 기준(BRACKET_2/3_WH)을 쓰지만,
-# "요금(원)"은 그렇게 계산하면 몇천 원대로 나와서 사람이 체감하는 실제 전기요금 느낌이 안 남.
-# 그래서 요금 계산 시에만 raw 사용량을 "220V-등가"로 되돌려서(×220/12), 실제 한전 200kWh/400kWh
-# 구간·실제 원/kWh 단가에 그대로 대입 — 그래야 2구간 근처에서 실제 가정 전기요금과 비슷한
-# 2~3만원대가 나와서 시연할 때 사람들이 체감할 수 있음 (2026-07-30 사용자 확정).
-# 실제 한전 주택용 저압 요금(기본요금 910/1,600/7,300원, 전력량요금 120.0/214.6/307.3원/kWh — 웹 검색 확인).
+# 요금: 게이지/구간확률과 완전히 같은 축소 기준(BRACKET_2/3_WH, 12V/220V 전압비 적용)을 요금
+# 계산에도 그대로 씀 — 별도 역환산 없음 (한때 요금만 ×220/12로 부풀렸다가, 데이터가 며칠 안
+# 쌓인 초반에 예측치가 비현실적으로 뻥튀기되는 문제가 있어서 되돌림, 2026-07-30 밤).
+# 실제 한전 주택용 저압 요금(기본요금 910/1,600/7,300원, 전력량요금 120.0/214.6/307.3원/kWh —
+# 웹 검색 확인)을 그대로 재사용하되, 이 숫자를 "1kWh당 원"이 아니라 "1(축소)Wh당 원"으로 적용 —
+# 즉 실제 요금 숫자는 유지하면서 단위만 우리 축소 스케일에 맞춰 재해석.
 TIER_BASE_FEE_WON = {1: 910, 2: 1_600, 3: 7_300}
-TIER_RATE_WON_PER_WH = {1: 120.0, 2: 214.6, 3: 307.3}  # 실제 원/kWh 값을 그대로 재사용 (요금 계산용 220V-등가 입력에 대입)
-FEE_TIER1_MAX_WH = 200.0  # 요금 계산 전용 - 실제 한전 구간(200kWh를 그대로 Wh로 relabel), 축소된 BRACKET_*_WH와는 다름
-FEE_TIER2_MAX_WH = 400.0
+TIER_RATE_WON_PER_WH = {1: 120.0, 2: 214.6, 3: 307.3}
 
 MC_SIMULATIONS = int(os.environ.get("POWER_PREDICTION_MC_SIMS", 5000))
 FALLBACK_NOISE_STD = float(os.environ.get("POWER_PREDICTION_FALLBACK_NOISE_STD", 0.35))
@@ -240,21 +238,26 @@ def _resolve_extrapolation_factor(raw_total_so_far: float, raw_daily_rate: float
 
 def calc_monthly_fee_won(total_wh: float) -> float:
     """실제 한국 주택용 누진제와 동일한 구조(구간별 한계요금 누적 + 최고구간 기본요금)로 요금 계산.
-    입력(total_wh)은 축소된 실측 기준(BRACKET_2/3_WH)의 값이므로, 여기서만 220V-등가로
-    되돌려서(×220/12) 실제 한전 200kWh/400kWh 구간·실제 원/kWh 단가에 대입 — 그래야 요금이
-    실제 가정 전기요금처럼 체감되는 크기(2구간 근처면 2~3만원대)로 나옴 (2026-07-30 확정)."""
-    equiv_wh = total_wh / VOLTAGE_RATIO
 
-    tier = 1 if equiv_wh <= FEE_TIER1_MAX_WH else (2 if equiv_wh <= FEE_TIER2_MAX_WH else 3)
-    remaining = equiv_wh
+    2026-07-30 밤 다시 수정: 한 번은 "요금(원)만 220V-등가로 되돌려서(×220/12) 실제 한전
+    200/400kWh 구간에 대입"하는 방식을 썼는데, 이러면 데이터가 며칠 안 쌓인 초반에 예측치를
+    18배 가까이 부풀리는 셈이라 "이틀치 데이터로 벌써 3만원대"처럼 비현실적으로 부풀려짐
+    (사용자 지적, 2026-07-30). 되돌림: **와트/구간 임계값만 12V 기준(BRACKET_2/3_WH)으로
+    줄이고, 요금은 그 축소된 구간에 실제 한전 원/kWh 단가를 그대로(추가 역환산 없이) 적용** —
+    즉 total_wh를 부풀리지 않고, 이미 축소된 BRACKET_2_WH/BRACKET_3_WH(TIER1/2_MAX_WH)를
+    구간 경계로 그대로 사용. 이러면 실제 누적/예측 사용량이 커질수록 요금도 자연스럽게 함께
+    커지고(며칠치 데이터면 며칠치만큼만), 데이터가 쌓여서 구간을 실제로 넘어설 때만 요금이
+    단계적으로 뛴다 — 인위적인 월말 예측 부풀리기로 요금이 먼저 튀는 일이 없음."""
+    tier = 1 if total_wh <= TIER1_MAX_WH else (2 if total_wh <= TIER2_MAX_WH else 3)
+    remaining = total_wh
     energy_charge = 0.0
 
-    t1 = min(remaining, FEE_TIER1_MAX_WH)
+    t1 = min(remaining, TIER1_MAX_WH)
     energy_charge += t1 * TIER_RATE_WON_PER_WH[1]
     remaining -= t1
 
     if remaining > 0:
-        t2 = min(remaining, FEE_TIER2_MAX_WH - FEE_TIER1_MAX_WH)
+        t2 = min(remaining, TIER2_MAX_WH - TIER1_MAX_WH)
         energy_charge += t2 * TIER_RATE_WON_PER_WH[2]
         remaining -= t2
 
@@ -682,12 +685,12 @@ def predict_monthly_tax_risk() -> dict:
             "gemini_cache_age_seconds": cache_age_seconds,
             "gemini_cache_ttl_seconds": GEMINI_CACHE_TTL_SECONDS,
             "note": (
-                f"예측 엔진: {engine_used}. 사용량(누적/예측/게이지 구간)은 실측값 그대로(배율 {factor:.2f}·{factor_source}, "
-                f"기본 1.0=raw) — 구간 임계값(2구간 {BRACKET_2_WH:.1f}Wh/3구간 {BRACKET_3_WH:.1f}Wh)도 원래 220V 기준"
-                f"(200/400Wh)에서 12V/220V 전압비({VOLTAGE_RATIO:.4f})만큼 낮춘 값이라 실측 규모에 자연스럽게 맞음. "
-                "요금(원)만 별도로, 이 축소된 사용량을 다시 220V-등가로 환산해서(×220/12) 실제 한전 200kWh/400kWh "
-                "구간·실제 원/kWh 단가에 대입 — 그래야 2구간 근처에서 실제 가정 전기요금처럼 체감되는 2~3만원대가 "
-                "나옴 (기본요금 TIER_BASE_FEE_WON, 단가 TIER_RATE_WON_PER_WH 둘 다 실제 한전 고시요금 기반)."
+                f"예측 엔진: {engine_used}. 사용량(누적/예측)은 실측값 그대로(배율 {factor:.2f}·{factor_source}, "
+                f"기본 1.0=raw). 구간 임계값(2구간 {BRACKET_2_WH:.1f}Wh/3구간 {BRACKET_3_WH:.1f}Wh)은 원래 220V 기준"
+                f"(200/400Wh)에서 12V/220V 전압비({VOLTAGE_RATIO:.4f})만큼 낮춘 값. 요금도 이 축소 기준·축소 구간을 "
+                "그대로 써서 계산 (별도 역환산 없음) — 실제 한전 원/kWh 단가를 그대로 재사용하되 단위만 축소 스케일에 "
+                "맞춰 적용, 그래서 실제 쌓인 사용량만큼만 요금이 붙고 며칠 안 된 데이터가 과장되지 않음 "
+                "(기본요금 TIER_BASE_FEE_WON, 단가 TIER_RATE_WON_PER_WH 둘 다 실제 한전 고시요금 기반)."
             ),
         },
     }
