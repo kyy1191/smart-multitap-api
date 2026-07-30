@@ -2551,10 +2551,24 @@
                 window.addEventListener('online', handleOnline);
                 window.addEventListener('offline', handleOffline);
 
-                // 5초마다 타임스탬프 갱신 (상태 변화 없어도 "살아있음" 표시)
-                const clock = setInterval(() => {
+                // 5초마다 서버의 와이파이 상태(라즈베리파이가 폰의 로컬 존재를 감시해서 기록한 값 포함)를
+                // 조회해서 동기화. (예전엔 여기서 navigator.onLine으로 매번 강제 덮어써서, 수동 토글을
+                // 꺼도 브라우저 자체는 여전히 온라인이라 5초 안에 다시 켜진 것처럼 보이는 버그가 있었음 - 제거)
+                const clock = setInterval(async () => {
                     setWifiLastUpdated(new Date().toLocaleTimeString());
-                    setWifiConnected(navigator.onLine);
+                    try {
+                        const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status');
+                        const data = await res.json();
+                        setWifiConnected(prev => {
+                            if (data.connected !== prev) {
+                                if (onWifiChange) onWifiChange(data.connected, currentSSID);
+                                return data.connected;
+                            }
+                            return prev;
+                        });
+                    } catch (error) {
+                        // 서버 조회 실패 시 기존 상태 유지
+                    }
                 }, 5000);
 
                 return () => {
