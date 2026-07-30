@@ -822,97 +822,30 @@
                             </button>
                         </div>
                         <div className="space-y-3">
-                            {logs.slice(0, 3).map((notif) => (
-                                <MinimalCard key={notif.id} className="p-4 flex gap-4 items-start group hover:border-green-100 transition-all">
-                                    <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${notif.type === 'danger' ? 'bg-red-50 text-red-500' : notif.type === 'success' ? 'bg-green-50 text-green-500' : 'bg-blue-50 text-blue-500'}`}>
-                                        <Icons.AlertCircle size={16} />
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex justify-between items-center mb-1">
-                                            <h4 className="text-sm font-bold text-gray-900">{notif.title}</h4>
-                                            <span className="text-[10px] text-gray-400 font-medium">{notif.time}</span>
-                                        </div>
-                                        <p className="text-xs text-gray-500 leading-relaxed">{notif.msg}</p>
-                                    </div>
+                            {logs.length === 0 ? (
+                                <MinimalCard className="p-4 text-center">
+                                    <p className="text-xs text-gray-400">{language === 'KR' ? '아직 위험기기 차단 이력이 없습니다.' : 'No high-risk device cut-offs yet.'}</p>
                                 </MinimalCard>
-                            ))}
+                            ) : (
+                                logs.slice(0, 3).map((notif) => (
+                                    <MinimalCard key={notif.id} className="p-4 flex gap-4 items-start group hover:border-green-100 transition-all">
+                                        <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${notif.type === 'danger' ? 'bg-red-50 text-red-500' : notif.type === 'success' ? 'bg-green-50 text-green-500' : 'bg-blue-50 text-blue-500'}`}>
+                                            <Icons.AlertCircle size={16} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <h4 className="text-sm font-bold text-gray-900">{notif.title}</h4>
+                                                <span className="text-[10px] text-gray-400 font-medium">{notif.time}</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500 leading-relaxed">{notif.msg}</p>
+                                        </div>
+                                    </MinimalCard>
+                                ))
+                            )}
                         </div>
                     </div>
 
-                    <div className="mb-6">
-                        <h3 className="text-[13px] font-bold text-gray-900 mb-4">{t('todaySummary')}</h3>
-                        
-                        <div className="grid grid-cols-3 gap-2 mb-6">
-                            <SummaryCard icon={<Icons.Zap size={16} />} title={t('energySaved')} value={`${stats?.today?.energy_saved_kwh || 0} kWh`} subValue="" />
-                            <SummaryCard icon={<Icons.Plug size={16} />} title={t('costSaved')} value={`₩${stats?.today?.cost_saved_won?.toLocaleString() || 0}`} subValue="" color="bg-blue-50 text-blue-600" />
-                            <SummaryCard icon={<Icons.Shield size={16} />} title={t('firePrevention')} value={`${stats?.today?.fire_prevention_count || 0}`} subValue={t('autoCut')} color="bg-red-50 text-red-600" />
-                        </div>
-
-                        <div className="space-y-4">
-                            <MinimalCard className="p-6 bg-gradient-to-br from-green-600 to-green-500 text-white border-none shadow-lg relative overflow-hidden group">
-                                <div className="relative z-10">
-                                    <div className="flex justify-between items-start mb-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[11px] font-bold opacity-80 uppercase tracking-widest block">
-                                                {language === 'KR' ? 'AI 최적화 누적 성과' : 'AI Optimization Total Achievement'}
-                                            </span>
-                                            <span className="text-[9px] bg-white/20 px-1.5 py-0.5 rounded-md font-bold backdrop-blur-sm">
-                                                {language === 'KR' ? '7월' : 'July'}
-                                            </span>
-                                        </div>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); setShowSavingsAnalysis(true); }}
-                                            className="flex items-center gap-1 text-[9px] font-bold text-white/90 hover:text-white bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded-full transition-all backdrop-blur-sm border border-white/20 shrink-0"
-                                        >
-                                            {language === 'KR' ? '분석' : 'Analyze'}
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-                                        </button>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                        <div className="flex items-baseline gap-2">
-                                            <span className="text-3xl font-black">₩{stats?.cumulative?.total_cost_saved?.toLocaleString() || '0'}</span>
-                                            <span className="text-sm font-medium opacity-80">{language === 'KR' ? '절약됨' : 'Saved'}</span>
-                                        </div>
-                                        <div className="flex items-center gap-2 opacity-90">
-                                            <div className="w-1 h-1 bg-white rounded-full" />
-                                            <span className="text-lg font-bold">{stats?.cumulative?.total_kwh_saved || '0'} kWh</span>
-                                            <span className="text-xs font-medium opacity-70">{language === 'KR' ? '전력량 절감' : 'Energy reduced'}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="absolute -right-4 -bottom-4 opacity-20 rotate-12">
-                                    <Icons.Zap size={100} strokeWidth={1} />
-                                </div>
-                            </MinimalCard>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-white p-4 rounded-[24px] border border-gray-100 shadow-sm">
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">{language === 'KR' ? '지난주 대비' : 'Vs Last Week'}</p>
-                                    <div className="flex items-center gap-1.5">
-                                        <div className="flex items-center justify-center w-5 h-5 bg-green-100 text-green-600 rounded-full">
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
-                                        </div>
-                                        <span className="text-lg font-black text-green-600">-12.4%</span>
-                                    </div>
-                                    <p className="text-[9px] text-green-600 mt-1 font-bold">
-                                        {language === 'KR' ? '상위 15% 사용자보다 더 아꼈어요!' : 'Saved more than the top 15% of users!'}
-                                    </p>
-                                </div>
-                                <div className="bg-white p-4 rounded-[24px] border border-gray-100 shadow-sm">
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">{language === 'KR' ? '지난달 대비' : 'Vs Last Month'}</p>
-                                    <div className="flex items-center gap-1.5">
-                                        <div className="flex items-center justify-center w-5 h-5 bg-green-100 text-green-600 rounded-full">
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
-                                        </div>
-                                        <span className="text-lg font-black text-green-600">-8.7%</span>
-                                    </div>
-                                    <p className="text-[9px] text-green-600 mt-1 font-bold">
-                                        {language === 'KR' ? '평균 사용자보다 2.4배 더 효율적이에요!' : '2.4x more efficient than average users!'}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    {/* 🗑️ 2026-07-31: "오늘의 요약" 섹션(SummaryCard 3개 + AI 누적 성과 카드 + 지난주/지난달 비교) 삭제 요청으로 제거 */}
                     <QuickControlEditor isOpen={isEditingFeatured} onClose={() => setIsEditingFeatured(false)} strips={strips} featuredIds={featuredIds} setFeaturedIds={setFeaturedIds} language={language} />
 
                     {/* ✅ 분석 모달 렌더링 (에러 완벽 해결!) */}
@@ -2750,11 +2683,9 @@
                 today: { energy_saved_kwh: 0, cost_saved_won: 0, fire_prevention_count: 0 },
                 cumulative: { total_kwh_saved: 124.0, total_cost_saved: 18600 }
             })
-            const [logs, setLogs] = useState([
-                { id: 2, title: translations.KR.notifications.cutOff.title, msg: translations.KR.notifications.cutOff.msg, time: '2h ago', type: 'danger' },
-                { id: 3, title: translations.KR.notifications.goal.title, msg: translations.KR.notifications.goal.msg, time: '5h ago', type: 'success' },
-                { id: 4, title: translations.KR.notifications.update.title, msg: translations.KR.notifications.update.msg, time: '1d ago', type: 'info' },
-            ]);
+            // 🔔 2026-07-31: 고정 가짜 알람 3개(항상 "2h ago"로 박제된 시연용 더미) 제거 -
+            // 이제 위험기기가 실제로 차단됐을 때만 addLog가 호출되어 여기 쌓임(의미 없는 알람 방지).
+            const [logs, setLogs] = useState([]);
             
             const [featuredIds, setFeaturedIds] = useState(['strip-1-1', 'strip-1-2', 'strip-1-3', 'strip-1-4']);
             const [apiData, setApiData] = useState(null);
@@ -3026,6 +2957,18 @@
                                         return port;
                                     })
                                 })));
+
+                                // 🤖 2026-07-31: AI 지문 인식 결과(apiData)는 여태 loadData()의 10초 폴링에만
+                                // 얹혀서 나머지 실시간 수치(strips, 위에서 즉시 갱신됨)보다 최대 10초씩 뒤처졌음
+                                // ("실시간인데 살짝 딜레이 느낌" 원인) - 웹소켓 메시지에도 바로 반영해서 동기화.
+                                setApiData(prev => {
+                                    if (!prev) return prev;
+                                    return prev.map(row =>
+                                        row.device_id === sensor.device_id && row.port_number === sensor.port_number
+                                            ? { ...row, ...sensor }
+                                            : row
+                                    );
+                                });
                             }
                         } catch(e) {}
                     };
@@ -3204,7 +3147,7 @@
                                         onClick={() => {
                                             setShowAwayAlert(false);
                                             setWifiDisconnectTime(Date.now()); // 1분 뒤 다시 알림이 오도록 리셋
-                                            addLog({ id: Date.now(), title: '외출 알림 보류', msg: '사용자가 전원 유지를 선택하여 알림을 보류했습니다.', time: '방금 전', type: 'info' });
+                                            // 🔔 2026-07-31: 차단을 안 한(보류) 경우는 실제 위험기기 차단이 아니므로 알람 로그 남기지 않음
                                         }}
                                         className="flex-1 py-3 rounded-xl text-xs font-bold bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors"
                                     >
