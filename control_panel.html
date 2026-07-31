@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>스마트 멀티탭 - 로컬 컨트롤 패널</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background:#111; color:#eee; display:flex; flex-direction:column; align-items:center; padding:40px 20px; }
+  .card { background:#1c1c1c; border:1px solid #333; border-radius:12px; padding:24px; width:360px; margin-bottom:20px; }
+  h1 { font-size:18px; margin-bottom:24px; }
+  h2 { font-size:15px; color:#aaa; margin-bottom:12px; }
+  button { width:100%; padding:14px; border:none; border-radius:8px; font-size:15px; font-weight:bold; cursor:pointer; margin-top:8px; }
+  .btn-danger { background:#e5484d; color:white; }
+  .btn-danger:hover { background:#c53b3f; }
+  .btn-toggle-on { background:#2b8a3e; color:white; }
+  .btn-toggle-off { background:#555; color:#ccc; }
+  .status { font-size:13px; color:#999; margin-top:10px; text-align:center; }
+  .status.ok { color:#4caf50; }
+  .status.err { color:#e5484d; }
+</style>
+</head>
+<body>
+  <h1>스마트 멀티탭 로컬 컨트롤 패널</h1>
+
+  <div class="card">
+    <h2>DB 전송 제어</h2>
+    <div id="uploadState" class="status">상태 확인 중...</div>
+    <button id="toggleBtn" onclick="toggleUpload()">-</button>
+  </div>
+
+  <div class="card">
+    <h2>DB 데이터 전체 삭제</h2>
+    <button class="btn-danger" onclick="clearDb()">Supabase sensor_data 전체 삭제</button>
+    <div id="clearStatus" class="status"></div>
+  </div>
+
+<script>
+const API = "https://smart-multitap-api.onrender.com";
+let uploadEnabled = true;
+
+async function refreshStatus() {
+  try {
+    const res = await fetch(`${API}/db-upload-status`);
+    const data = await res.json();
+    uploadEnabled = data.enabled;
+    renderToggle();
+  } catch (e) {
+    document.getElementById("uploadState").textContent = "상태 조회 실패: " + e;
+    document.getElementById("uploadState").className = "status err";
+  }
+}
+
+function renderToggle() {
+  const stateEl = document.getElementById("uploadState");
+  const btn = document.getElementById("toggleBtn");
+  if (uploadEnabled) {
+    stateEl.textContent = "현재: DB 전송 켜짐 (정상 저장 중)";
+    stateEl.className = "status ok";
+    btn.textContent = "DB 전송 끄기";
+    btn.className = "btn-toggle-off";
+  } else {
+    stateEl.textContent = "현재: DB 전송 꺼짐 (Supabase에 안 쌓임)";
+    stateEl.className = "status err";
+    btn.textContent = "DB 전송 켜기";
+    btn.className = "btn-toggle-on";
+  }
+}
+
+async function toggleUpload() {
+  const next = !uploadEnabled;
+  try {
+    const res = await fetch(`${API}/toggle-db-upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next })
+    });
+    const data = await res.json();
+    uploadEnabled = data.enabled;
+    renderToggle();
+  } catch (e) {
+    alert("전송 설정 변경 실패: " + e);
+  }
+}
+
+async function clearDb() {
+  if (!confirm("정말 Supabase의 모든 센서 데이터를 삭제할까요? 되돌릴 수 없어요.")) return;
+  const statusEl = document.getElementById("clearStatus");
+  statusEl.textContent = "삭제 중...";
+  statusEl.className = "status";
+  try {
+    const res = await fetch(`${API}/clear-db`, { method: "POST" });
+    const data = await res.json();
+    if (data.status === "success") {
+      statusEl.textContent = "삭제 완료: " + data.message;
+      statusEl.className = "status ok";
+    } else {
+      statusEl.textContent = "실패: " + data.message;
+      statusEl.className = "status err";
+    }
+  } catch (e) {
+    statusEl.textContent = "요청 실패: " + e;
+    statusEl.className = "status err";
+  }
+}
+
+refreshStatus();
+</script>
+</body>
+</html>
