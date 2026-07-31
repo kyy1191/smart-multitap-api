@@ -2163,10 +2163,15 @@
 
                 if (!connected) {
                     // 위험기기 즉시 자동 차단
+                    // 🟢 2026-07-31: 감지가 흔들릴 때(끊김↔연결 반복 감지) 매번 다시 차단하면
+                    // 방금 사용자가 수동으로 켠 걸 계속 도로 꺼버려서 "제어가 안 먹는다"처럼 보이는
+                    // 문제가 있었음 - 최근 60초 안에 수동 조작(window.toggleLock)이 있었던 포트는
+                    // 이번 감지 사이클에서는 건너뛰고, 그 유예시간이 지나도 여전히 끊긴 상태면 그때 차단.
                     setStrips(prev => prev.map(strip => ({
                         ...strip,
                         ports: strip.ports.map(port => {
-                            if (port.type === 'High-risk' && port.status === 'On') {
+                            const recentlyManual = window.toggleLock && window.toggleLock[port.id] && (Date.now() - window.toggleLock[port.id] < 60000);
+                            if (port.type === 'High-risk' && port.status === 'On' && !recentlyManual) {
                                 console.log(`[외출 즉시안전차단] 위험기기 감지: ${port.name} 차단`);
                                 fetch('https://smart-multitap-api.onrender.com/control', {
                                     method: 'POST',
@@ -2184,12 +2189,12 @@
                         })
                     })));
 
-                    addLog({ 
-                        id: Date.now(), 
-                        title: '외출 자동 안전 차단', 
-                        msg: '와이파이 연결이 해제되어 작동 중이던 위험기기의 전원을 즉시 차단했습니다.', 
-                        time: '방금 전', 
-                        type: 'danger' 
+                    addLog({
+                        id: Date.now(),
+                        title: '외출 자동 안전 차단',
+                        msg: '와이파이 연결이 해제되어 작동 중이던 위험기기의 전원을 즉시 차단했습니다.',
+                        time: '방금 전',
+                        type: 'danger'
                     });
 
                     // 와이파이 꺼진 시간 기록
@@ -2306,12 +2311,19 @@
                 window.addEventListener('online', handleOnline);
                 window.addEventListener('offline', handleOffline);
 
-                // 🟢 라즈베리파이가 로컬에서 감지한 진짜 와이파이 상태(서버 /wifi-status)를 5초마다 동기화.
-                // navigator.onLine만으로는 "와이파이 끄고 데이터는 켜둔" 상황을 감지 못 하므로,
-                // 로컬 존재감시 결과를 여기서도 반영해야 앱 전체(탭 무관)에서 실제로 작동함.
+                // 🟢 2026-07-31 재작업: navigator.onLine/offline 이벤트가 실측 30초 이상 걸려서
+                // (OS가 알려줄 때까지 기다리는 수동적 신호라 원래 느림 - 서버 콜드스타트는 실측으로
+                // 무관함을 확인함, 서버는 계속 0.2~0.5초로 빠르게 응답했었음), 서버에 저장된 값을
+                // 그냥 읽어오기만 하는 대신 이 요청 자체의 성공/실패/타임아웃을 "지금 연결 상태"의
+                // 직접 증거로 씀. 예전에 이렇게 했다가 "위험기기를 계속 다시 꺼서 수동 제어랑 싸움"
+                // 문제가 있었는데, 그건 handleWifiChange 안에 추가한 60초 유예(recentlyManual) 덕분에
+                // 이제 감지가 예민해도 최근 수동 조작을 덮어쓰지 않음 - 그래서 여기는 다시 빠르게.
                 const wifiStatusPoll = setInterval(async () => {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 3000);
                     try {
-                        const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status');
+                        const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status', { signal: controller.signal });
+                        clearTimeout(timeoutId);
                         const data = await res.json();
                         setWifiConnected(prev => {
                             if (data.connected !== prev) {
@@ -2322,9 +2334,20 @@
                             return prev;
                         });
                     } catch (error) {
-                        // 조회 실패 시 기존 상태 유지
+                        clearTimeout(timeoutId);
+                        // 요청 실패/타임아웃 = 지금 연결이 끊겼다는 직접 증거로 취급.
+                        // (예전엔 이게 위험기기를 계속 다시 꺼서 문제였지만, 이제 handleWifiChange의
+                        // 60초 유예가 최근 수동 조작을 보호하므로 여기서 예민해도 안전함.)
+                        setWifiConnected(prev => {
+                            if (prev !== false) {
+                                setWifiDisconnectTime(Date.now());
+                                handleWifiChange(false, currentSSID, false);
+                                return false;
+                            }
+                            return prev;
+                        });
                     }
-                }, 5000);
+                }, 3000);
 
                 return () => {
                     window.removeEventListener('online', handleOnline);
