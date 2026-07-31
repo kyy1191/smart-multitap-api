@@ -82,39 +82,53 @@ MAX_BUFFER_SIZE = 10     # 10개 누적 시 저장
 # [장부 시스템] 전역 상태 변수로 관리하여 I/O 경합 완전 차단
 global_state = None
 
+_STATE_DEFAULT = {
+    "power": {"1": True, "2": True, "3": True, "4": True},
+    "wifi": True,
+    "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
+    "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0},
+    "db_upload_enabled": True
+}
+
 def get_state():
     global global_state
     if global_state is not None:
         return global_state
 
-    if not os.path.exists(STATE_FILE):
-        initial = {
-            "power": {"1": True, "2": True, "3": True, "4": True},
-            "wifi": True,
-            "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
-            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0},
-            "db_upload_enabled": True
-        }
-        global_state = initial
-        save_state(initial)
-        return initial
-    try:
-        with open(STATE_FILE, "r") as f:
-            global_state = json.load(f)
-            return global_state
-    except:
-        global_state = {
-            "power": {"1": True, "2": True, "3": True, "4": True},
-            "wifi": True,
-            "types": {"1": "상시", "2": "일반", "3": "일반", "4": "일반"},
-            "last_toggle_time": {"1": 0, "2": 0, "3": 0, "4": 0},
-            "db_upload_enabled": True
-        }
-        return global_state
+    # 2026-07-31: Supabase(app_state 테이블)를 최우선 소스로 씀 - Render는 index.html만
+    # 바뀐 배포에도 백엔드 프로세스를 재시작하는 것으로 실측 확인됐는데(포트 타입 "위험기기"
+    # 설정이 원인 모를 타이밍에 계속 기본값으로 초기화되던 문제 - 서버 메모리/의 /tmp 파일이
+    # 재시작마다 날아가는 게 진짜 원인이었음), fingerprints 테이블과 같은 패턴으로 Supabase에
+    # 영구 저장해서 재배포/재시작에도 살아남게 함. Supabase 연결 안 되면 /tmp 파일로 폴백.
+    if supabase:
+        try:
+            res = supabase.table("app_state").select("state").eq("id", 1).execute()
+            if res.data:
+                global_state = res.data[0]["state"]
+                return global_state
+        except Exception as e:
+            print("[app_state] Supabase 조회 실패, /tmp 폴백:", e)
+
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                global_state = json.load(f)
+                return global_state
+        except Exception:
+            pass
+
+    global_state = dict(_STATE_DEFAULT)
+    save_state(global_state)
+    return global_state
 
 def save_state(state):
     global global_state
     global_state = state
+    if supabase:
+        try:
+            supabase.table("app_state").upsert({"id": 1, "state": state}, on_conflict="id").execute()
+        except Exception as e:
+            print("[app_state] Supabase 저장 실패:", e)
     try:
         with open(STATE_FILE, "w") as f:
             json.dump(state, f)
