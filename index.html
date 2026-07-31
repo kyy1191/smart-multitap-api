@@ -2306,24 +2306,13 @@
                 window.addEventListener('online', handleOnline);
                 window.addEventListener('offline', handleOffline);
 
-                // 🟢 2026-07-31 개선, 같은 날 바로 수정: navigator.onLine/offline 이벤트는 OS가
-                // 알려줄 때까지 기다리는 수동적 신호라 반응이 굼뜸(실측 30초+) - 그래서 요청
-                // 실패/타임아웃 자체를 "끊김" 직접 증거로 쓰도록 바꿨었는데, 타임아웃(2.5초)이
-                // 너무 짧아서 데이터(셀룰러) 연결의 정상적인 지연/Render 콜드스타트만으로도
-                // 자꾸 "끊김"으로 오판 → 위험기기가 계속 자동으로 다시 꺼져서 "데이터로는 제어가
-                // 아예 안 된다"는 새 문제를 만들어버림(사용자 실측 확인). 타임아웃을 4초로 늘리고,
-                // 1번 실패로는 안 끊기고 "연속 2번 실패"해야만 끊김으로 확정하도록 디바운스 추가 -
-                // 최악의 경우에도 대략 3초×2회+4초 ≈ 10초 안팎으로 여전히 목표(10초) 안에 들어오면서,
-                // 순간적인 지연 한 번으로 제어가 막히는 오탐은 없앰.
-                let consecutiveFailures = 0;
+                // 🟢 라즈베리파이가 로컬에서 감지한 진짜 와이파이 상태(서버 /wifi-status)를 5초마다 동기화.
+                // navigator.onLine만으로는 "와이파이 끄고 데이터는 켜둔" 상황을 감지 못 하므로,
+                // 로컬 존재감시 결과를 여기서도 반영해야 앱 전체(탭 무관)에서 실제로 작동함.
                 const wifiStatusPoll = setInterval(async () => {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 4000);
                     try {
-                        const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status', { signal: controller.signal });
-                        clearTimeout(timeoutId);
+                        const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status');
                         const data = await res.json();
-                        consecutiveFailures = 0;
                         setWifiConnected(prev => {
                             if (data.connected !== prev) {
                                 setWifiDisconnectTime(data.connected ? null : Date.now());
@@ -2333,19 +2322,9 @@
                             return prev;
                         });
                     } catch (error) {
-                        clearTimeout(timeoutId);
-                        consecutiveFailures += 1;
-                        if (consecutiveFailures < 2) return; // 한 번의 실패는 오탐 방지를 위해 무시
-                        setWifiConnected(prev => {
-                            if (prev !== false) {
-                                setWifiDisconnectTime(Date.now());
-                                handleWifiChange(false, currentSSID, false);
-                                return false;
-                            }
-                            return prev;
-                        });
+                        // 조회 실패 시 기존 상태 유지
                     }
-                }, 3000);
+                }, 5000);
 
                 return () => {
                     window.removeEventListener('online', handleOnline);
