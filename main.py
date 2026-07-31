@@ -236,6 +236,24 @@ def recognized_name_from_matches(matches: List[dict]) -> Optional[str]:
         return None
     return top["device_name"]
 
+# [AI 인식 -> 포트 타입 자동 매핑] 2026-07-31: 사용자가 수동으로 뭘로 설정해놨든, AI가
+# Red LED로 인식하면 위험기기로, Yellow LED로 인식하면 일반기기로 자동으로 덮어쓴다.
+AUTO_TYPE_BY_RECOGNIZED_DEVICE = {
+    "Red LED": "위험",
+    "Yellow LED": "일반",
+}
+
+def auto_sync_port_type(port_number: int, recognized_device_name: Optional[str], state: dict) -> bool:
+    """인식된 기기 이름에 따라 포트 타입을 자동으로 맞춘다. 실제로 바뀌었으면 True(저장 필요)."""
+    target_type = AUTO_TYPE_BY_RECOGNIZED_DEVICE.get(recognized_device_name)
+    if target_type is None:
+        return False
+    p_str = str(port_number)
+    if state["types"].get(p_str) != target_type:
+        state["types"][p_str] = target_type
+        return True
+    return False
+
 def attach_fingerprint_fields(row: dict) -> dict:
     fingerprints = get_fingerprints_cached()
     matches = match_device_to_fingerprints(row.get("power", 0.0), row.get("current", 0.0), row.get("voltage", 0.0), fingerprints)
@@ -427,16 +445,22 @@ def get_data():
             }
 
     result = list(latest_data.values())
+    types_changed = False
     for row in result:
         p_str = str(row.get("port_number", 1))
-        row["device_type"] = state["types"].get(p_str, "일반")
         row["wifi_connected"] = state.get("wifi", True)
-        
+
         if state["power"].get(p_str) == False:
             row["is_on"] = False
             row["action_reason"] = "차단 상태"
 
         attach_fingerprint_fields(row)
+        if auto_sync_port_type(row.get("port_number", 1), row.get("recognized_device_name"), state):
+            types_changed = True
+        row["device_type"] = state["types"].get(p_str, "일반")
+
+    if types_changed:
+        save_state(state)
 
     result.sort(key=lambda x: x.get("port_number", 1))
     return result
@@ -631,6 +655,8 @@ def process_sensor_data(data: PowerData):
 
     # ⚡ 2. 실시간 캐시/브로드캐스트용에는 AI 인식 결과(fingerprint_matches 등)까지 얹어서 반환
     attach_fingerprint_fields(data_dict)
+    if auto_sync_port_type(data.port_number, data_dict.get("recognized_device_name"), state):
+        save_state(state)  # 위의 save_state(state)는 인식 전이라 타입이 바뀌었으면 한 번 더 저장
     latest_live_cache[data.port_number] = data_dict
 
     return data_dict
