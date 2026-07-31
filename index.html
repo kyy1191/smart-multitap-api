@@ -2306,21 +2306,24 @@
                 window.addEventListener('online', handleOnline);
                 window.addEventListener('offline', handleOffline);
 
-                // 🟢 2026-07-31 개선: navigator.onLine/offline 이벤트는 OS가 알려줄 때까지 기다리는
-                // 수동적 신호라 반응이 굼뜸(실측 30초+) - "와이파이 끄고 데이터만 켜둔" 상황에서도
-                // 서버로 요청 자체를 능동적으로 계속 날려서, 그 요청이 실패/타임아웃하면 그 자체를
-                // "지금 연결이 끊겼다"는 직접 증거로 씀 (예전엔 요청 실패를 그냥 조용히 무시하고
-                // 기존 상태를 유지하기만 해서, 서버의 /wifi-status 값이 바뀌지 않는 한 절대 못
-                // 잡아냈음 - 실제로 이게 "데이터만 있어도 되던 게 지금은 안 된다"는 문제의 원인이었음).
-                // 폴링 주기도 5초 -> 3초로, 요청 타임아웃도 2.5초로 짧게 줘서 최악의 경우에도
-                // 대략 5~6초 안에는 감지되게 함 (10초 목표 안에 여유있게 들어옴).
+                // 🟢 2026-07-31 개선, 같은 날 바로 수정: navigator.onLine/offline 이벤트는 OS가
+                // 알려줄 때까지 기다리는 수동적 신호라 반응이 굼뜸(실측 30초+) - 그래서 요청
+                // 실패/타임아웃 자체를 "끊김" 직접 증거로 쓰도록 바꿨었는데, 타임아웃(2.5초)이
+                // 너무 짧아서 데이터(셀룰러) 연결의 정상적인 지연/Render 콜드스타트만으로도
+                // 자꾸 "끊김"으로 오판 → 위험기기가 계속 자동으로 다시 꺼져서 "데이터로는 제어가
+                // 아예 안 된다"는 새 문제를 만들어버림(사용자 실측 확인). 타임아웃을 4초로 늘리고,
+                // 1번 실패로는 안 끊기고 "연속 2번 실패"해야만 끊김으로 확정하도록 디바운스 추가 -
+                // 최악의 경우에도 대략 3초×2회+4초 ≈ 10초 안팎으로 여전히 목표(10초) 안에 들어오면서,
+                // 순간적인 지연 한 번으로 제어가 막히는 오탐은 없앰.
+                let consecutiveFailures = 0;
                 const wifiStatusPoll = setInterval(async () => {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 2500);
+                    const timeoutId = setTimeout(() => controller.abort(), 4000);
                     try {
                         const res = await fetch('https://smart-multitap-api.onrender.com/wifi-status', { signal: controller.signal });
                         clearTimeout(timeoutId);
                         const data = await res.json();
+                        consecutiveFailures = 0;
                         setWifiConnected(prev => {
                             if (data.connected !== prev) {
                                 setWifiDisconnectTime(data.connected ? null : Date.now());
@@ -2331,7 +2334,8 @@
                         });
                     } catch (error) {
                         clearTimeout(timeoutId);
-                        // 요청 실패/타임아웃 = 지금 연결이 끊겼다는 직접적인 증거로 취급
+                        consecutiveFailures += 1;
+                        if (consecutiveFailures < 2) return; // 한 번의 실패는 오탐 방지를 위해 무시
                         setWifiConnected(prev => {
                             if (prev !== false) {
                                 setWifiDisconnectTime(Date.now());
